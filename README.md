@@ -1,12 +1,12 @@
 # Terminal Minecraft Launcher
 
 #### 介绍
-一个转为inux开发的基于TUI开发的轻量MineCraft启动器
+一个转为inux开发的基于TUI的轻量MineCraft启动器  
 目前仍在开发中，暂时不能使用
 
 
 #### 软件架构
-使用C语言专为linux开发，轻量高效
+使用C语言专为linux开发，轻量高效  
 使用了nsurses标准TUI库
 
 
@@ -23,5 +23,6 @@
 2.  可以使用hjklHL来移动
 
 
-### 加入我们
-RectifierBridge@126.com
+### 我们的团队
+- aleph0
+- aleph0
