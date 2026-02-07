@@ -1,7 +1,7 @@
 # Terminal Minecraft Launcher
 
 #### 介绍
-一个转为inux开发的基于TUI的轻量MineCraft启动器  
+一个基于TUI的轻量MineCraft启动器  
 目前仍在开发中，暂时不能使用
 
 
@@ -25,4 +25,4 @@
 
 ### 我们的团队
 - aleph0
-- aleph0
+- aleph1
