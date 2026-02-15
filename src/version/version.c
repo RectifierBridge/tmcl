@@ -1,5 +1,5 @@
 #include "version.h"
-#include "config.h"
+#include "../config/config.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
 #include <ncurses.h>

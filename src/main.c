@@ -1,7 +1,7 @@
 // main.c
-#include "account.h"
-#include "config.h"
-#include "version.h"
+#include "account/account.h"
+#include "config/config.h"
+#include "version/version.h"
 #include <ncurses.h>
 
 // 函数声明

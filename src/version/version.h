@@ -1,7 +1,7 @@
 #ifndef VERSION_H
 #define VERSION_H
 
-#include "config.h"
+#include "../config/config.h"
 #include <ncurses.h>
 
 // 版本信息结构
