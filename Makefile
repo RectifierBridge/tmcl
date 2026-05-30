@@ -1,10 +1,18 @@
 # 定义变量
 CC = gcc
-CFLAGS = -Wall -c
+CFLAGS = -Wall -c -Isrc -Isrc/account -Isrc/config -Isrc/version
 LIBS = -lncurses -lcjson
 TARGET = tmcl
-SOURCES = $(wildcard src/*.c)
-OBJS = $(patsubst src/%.c,build/%.o,$(SOURCES))
+
+# 查找所有源文件（包括子目录）
+SOURCES := $(wildcard src/*.c) \
+           $(wildcard src/tmcl/*.c) \
+           $(wildcard src/account/*.c) \
+           $(wildcard src/config/*.c) \
+           $(wildcard src/version/*.c)
+
+# 生成对应的目标文件路径
+OBJS := $(patsubst src/%,build/%,$(SOURCES:.c=.o))
 
 # 默认目标
 all: $(TARGET)
@@ -15,18 +23,20 @@ $(TARGET): $(OBJS)
 
 # 编译每个 .c 文件为 .o 文件
 build/%.o: src/%.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $< -o $@
 
 # 清理生成的文件
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf build/* $(TARGET)
 
 # 安装（示例）
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin/
 
 # 卸载
-	rm /usr/local/bin/tmcl
+uninstall:
+	rm -f /usr/local/bin/$(TARGET)
 
-# 声明伪目标（不对应实际文件）
-.PHONY: all clean install
+# 声明伪目标
+.PHONY: all clean install uninstall

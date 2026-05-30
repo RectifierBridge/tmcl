@@ -1,5 +1,6 @@
+// version.c
 #include "version.h"
-#include "config.h"
+#include "../config/config.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
 #include <ncurses.h>
@@ -20,139 +21,170 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir);
 
 // 初始化版本数据
 void init_versions(VersionState *state, ConfigState *ConfigState) {
-    state->version_count = 0;
-    state->selected_version = 0;
-    state->scroll_offset = 0;
-    
-    char *gameDir = ConfigState->items[2].value;
-    char versionDir[256];
-    
-    // 使用snprintf避免缓冲区溢出
-    snprintf(versionDir, sizeof(versionDir), "%s/versions/", gameDir);
-    
-    DIR *dirp = opendir(versionDir);
-    if (!dirp) {
-        perror("opendir failed");
-        return;
-    }
-    
-    struct dirent *entry;
-    state->versions = malloc(100 * sizeof(*(state->versions)));
-    if (!state->versions) {
-        closedir(dirp);
-        return;
-    }
-    
-    int count = 0;
-    
-    while ((entry = readdir(dirp)) != NULL && count < 100) {
-        if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0 &&
-            entry->d_type == DT_DIR) {
-            
-            char versionPath[300];  // 增加缓冲区大小
-            snprintf(versionPath, sizeof(versionPath), "%s%s/", versionDir, entry->d_name);
-            
-            DIR *child_dirp = opendir(versionPath);
-            if (!child_dirp) {
-                continue;  // 无法打开子目录，跳过
-            }
-            
-            char jsonName[150];
-            char jarName[150];
-            snprintf(jsonName, sizeof(jsonName), "%s.json", entry->d_name);
-            snprintf(jarName, sizeof(jarName), "%s.jar", entry->d_name);
-            
-            int haveJar = 0, haveJson = 0;
-            struct dirent *child_entry;
-            
-            while ((child_entry = readdir(child_dirp)) != NULL) {
-                if (strcmp(child_entry->d_name, jarName) == 0) {
-                    haveJar = 1;
-                }
-                if (strcmp(child_entry->d_name, jsonName) == 0) {
-                    haveJson = 1;
-                }
-            }
-            closedir(child_dirp);  // 关闭子目录句柄
-            
-            if (haveJar && haveJson) {
-                char json_path[350];
-                snprintf(json_path, sizeof(json_path), "%s%s", versionPath, jsonName);
-                
-                FILE *json_file = fopen(json_path, "r");
-                if (!json_file) {
-                    continue;  // 无法打开文件，跳过
-                }
-                
-                fseek(json_file, 0, SEEK_END);
-                long json_file_size = ftell(json_file);
-                fseek(json_file, 0, SEEK_SET);
-                
-                if (json_file_size <= 0) {
-                    fclose(json_file);
-                    continue;
-                }
-                
-                char *json_data = malloc(json_file_size + 1);
-                if (!json_data) {
-                    fclose(json_file);
-                    continue;
-                }
-                
-                size_t read_size = fread(json_data, 1, json_file_size, json_file);
-                json_data[read_size] = '\0';
-                fclose(json_file);
-                
-                cJSON *json = cJSON_Parse(json_data);
-                free(json_data);
-                
-                if (json) {
-                    cJSON *game_version = cJSON_GetObjectItem(json, "gameVersion");
-                    cJSON *game_type = cJSON_GetObjectItem(json, "type");
-                    
-                    if (game_type && game_type->valuestring) {
-                        // 使用安全复制，避免溢出
-                        strncpy(state->versions[count].type, game_type->valuestring, 
-                                sizeof(state->versions[count].type) - 1);
-                        state->versions[count].type[sizeof(state->versions[count].type) - 1] = '\0';
-                        
-                        strncpy(state->versions[count].name, entry->d_name,
-                                sizeof(state->versions[count].name) - 1);
-                        state->versions[count].name[sizeof(state->versions[count].name) - 1] = '\0';
-                        
-                        if (game_version && game_version->valuestring) {
-                            strncpy(state->versions[count].version, game_version->valuestring,
-                                    sizeof(state->versions[count].version) - 1);
-                            state->versions[count].version[sizeof(state->versions[count].version) - 1] = '\0';
-                        } else {
-                            strncpy(state->versions[count].version, "unknown",
-                                    sizeof(state->versions[count].version) - 1);
-                        }
-                        
-                        state->versions[count].modloader[0] = '\0';
-                        count++;
-                    }
-                    cJSON_Delete(json);  // 释放cJSON对象
-                }
-            }
-        }
-    }
+  state->version_count = 0;
+  state->selected_version = 0;
+  state->scroll_offset = 0;
+
+  char *gameDir = ConfigState->items[2].value;
+  char versionDir[256];
+
+  // 使用snprintf避免缓冲区溢出
+  snprintf(versionDir, sizeof(versionDir), "%s/versions/", gameDir);
+
+  DIR *dirp = opendir(versionDir);
+  if (!dirp) {
+    perror("opendir failed");
+    return;
+  }
+
+  struct dirent *entry;
+  state->versions = malloc(100 * sizeof(*(state->versions)));
+  if (!state->versions) {
     closedir(dirp);
-    
-    // 排序（仅当count>1时）
-    if (count > 1) {
-        for (int i = 0; i < count - 1; i++) {
-            for (int j = i + 1; j < count; j++) {
-                if (strcmp(state->versions[i].name, state->versions[j].name) > 0) {
-                    VersionInfo temp = state->versions[i];
-                    state->versions[i] = state->versions[j];
-                    state->versions[j] = temp;
-                }
-            }
+    return;
+  }
+
+  int count = 0;
+
+  while ((entry = readdir(dirp)) != NULL && count < 100) {
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0 &&
+        entry->d_type == DT_DIR) {
+
+      char versionPath[300]; // 增加缓冲区大小
+      snprintf(versionPath, sizeof(versionPath), "%s%s/", versionDir,
+               entry->d_name);
+
+      DIR *child_dirp = opendir(versionPath);
+      if (!child_dirp) {
+        continue; // 无法打开子目录，跳过
+      }
+
+      char jsonName[150];
+      char jarName[150];
+      snprintf(jsonName, sizeof(jsonName), "%s.json", entry->d_name);
+      snprintf(jarName, sizeof(jarName), "%s.jar", entry->d_name);
+
+      int haveJar = 0, haveJson = 0;
+      struct dirent *child_entry;
+
+      while ((child_entry = readdir(child_dirp)) != NULL) {
+        if (strcmp(child_entry->d_name, jarName) == 0) {
+          haveJar = 1;
         }
+        if (strcmp(child_entry->d_name, jsonName) == 0) {
+          haveJson = 1;
+        }
+      }
+      closedir(child_dirp); // 关闭子目录句柄
+
+      if (haveJar && haveJson) {
+        char json_path[350];
+        snprintf(json_path, sizeof(json_path), "%s%s", versionPath, jsonName);
+
+        FILE *json_file = fopen(json_path, "r");
+        if (!json_file) {
+          continue; // 无法打开文件，跳过
+        }
+
+        fseek(json_file, 0, SEEK_END);
+        long json_file_size = ftell(json_file);
+        fseek(json_file, 0, SEEK_SET);
+
+        if (json_file_size <= 0) {
+          fclose(json_file);
+          continue;
+        }
+
+        char *json_data = malloc(json_file_size + 1);
+        if (!json_data) {
+          fclose(json_file);
+          continue;
+        }
+
+        size_t read_size = fread(json_data, 1, json_file_size, json_file);
+        json_data[read_size] = '\0';
+        fclose(json_file);
+
+        cJSON *json = cJSON_Parse(json_data);
+        free(json_data);
+
+        if (json) {
+          cJSON *game_version = cJSON_GetObjectItem(json, "gameVersion");
+          cJSON *game_type = cJSON_GetObjectItem(json, "type");
+          cJSON *mod_loader_forge = cJSON_GetObjectItem(json, "forge");
+          cJSON *mod_loader_fabric = cJSON_GetObjectItem(json, "fabric");
+
+          if (game_type && game_type->valuestring) {
+            // game type
+            strncpy(state->versions[count].type, game_type->valuestring,
+                    sizeof(state->versions[count].type) - 1);
+            state->versions[count]
+                .type[sizeof(state->versions[count].type) - 1] = '\0';
+
+            // 从目录名获取版本名称
+            strncpy(state->versions[count].name, entry->d_name,
+                    sizeof(state->versions[count].name) - 1);
+            state->versions[count]
+                .name[sizeof(state->versions[count].name) - 1] = '\0';
+
+            // game version number
+            if (game_version && game_version->valuestring) {
+              strncpy(state->versions[count].version, game_version->valuestring,
+                      sizeof(state->versions[count].version) - 1);
+              state->versions[count]
+                  .version[sizeof(state->versions[count].version) - 1] = '\0';
+            } else {
+              strncpy(state->versions[count].version, "unknown",
+                      sizeof(state->versions[count].version) - 1);
+              state->versions[count]
+                  .version[sizeof(state->versions[count].version) - 1] =
+                  '\0'; // 补充缺失的终止符
+            }
+
+            // modloader 检查 fabric / forge
+            if (mod_loader_fabric) {
+              strncpy(state->versions[count].modloader, "fabric",
+                      sizeof(state->versions[count].modloader) - 1);
+              state->versions[count]
+                  .modloader[sizeof(state->versions[count].modloader) - 1] =
+                  '\0'; // 修正为 modloader
+            } else if (mod_loader_forge) {
+              strncpy(state->versions[count].modloader, "forge",
+                      sizeof(state->versions[count].modloader) - 1);
+              state->versions[count]
+                  .modloader[sizeof(state->versions[count].modloader) - 1] =
+                  '\0';
+            } else {
+              strncpy(state->versions[count].modloader, "vanilla",
+                      sizeof(state->versions[count].modloader) - 1);
+              state->versions[count]
+                  .modloader[sizeof(state->versions[count].modloader) - 1] =
+                  '\0'; // 补充缺失的终止符
+            }
+
+            count++;
+          }
+          cJSON_Delete(json); // 释放 cJSON 对象
+        }
+      }
     }
-    
-    state->version_count = count;
+  }
+  closedir(dirp);
+
+  // 排序（仅当count>1时）
+  if (count > 1) {
+    for (int i = 0; i < count - 1; i++) {
+      for (int j = i + 1; j < count; j++) {
+        if (strcmp(state->versions[i].name, state->versions[j].name) > 0) {
+          VersionInfo temp = state->versions[i];
+          state->versions[i] = state->versions[j];
+          state->versions[j] = temp;
+        }
+      }
+    }
+  }
+
+  state->version_count = count;
 }
 
 // 启动版本函数
@@ -177,7 +209,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   char assets_path[164];
   snprintf(assets_path, sizeof(assets_path), "%s/assets", minecraft_dir);
 
-  char *classpath = classpath_from_json(state, minecraft_dir);
+  char classpath[10240];
+  strcpy(classpath, classpath_from_json(state, minecraft_dir));
 
   args[arg_count++] = java_path;
   args[arg_count++] = max_memory_arg;
@@ -422,7 +455,6 @@ void version_page(int ch, int *middlep, VersionState *state,
     mvprintw(start_y + max_display, 2, "...more below...");
   }
 
-
   // 底部操作提示
   switch (*middlep) {
   case 0:
@@ -468,8 +500,6 @@ void version_page(int ch, int *middlep, VersionState *state,
   printw(" [C]onfig [A]ccount");
   mvprintw(0, col - 15, "tap [q] to quit");
 }
-
-
 
 // 从json读取并构建classpath
 char *classpath_from_json(VersionState *state, char *minecraft_dir) {
