@@ -43,10 +43,10 @@ void home_page(int ch, int *middlep, HomeState *state,
   printw("    ##     ##      ##  #######  ######\n\n");
   printw("  Terminal Minecraft Launcher,\n");
   printw("  A Minecraft launcher based on TUI.\n");
-  printw("  TMCL is free open-source software.\n\n\n\n");
+  printw("  TMCL is free open-source software.\n\n");
   // 底部信息
-  mvprintw(row - 4, 2, "  Buy us a coffee.");
-  mvprintw(row - 3, 2, "  Developer: fossrina.");
+  printw("  Buy us a coffee.\n");
+  printw("  Developer: fossrina.");
 
   // key
   switch (ch) {
@@ -59,33 +59,34 @@ void home_page(int ch, int *middlep, HomeState *state,
   }
 
   // two game versions to display
-  int line_start = 20;
-
-  move(line_start, 4);
+  move(20, 4);
   if (state->selected == 0) {
     attron(A_REVERSE);
   }
+  printw("Pinned Version:\n");
   if (VersionState->version_count == 0) {
-    printw("No version installed.");
+    mvprintw(21, 4,"No version installed.");
   } else if (state->pinned_index < 0) {
-    printw("No pinned version.");
+    mvprintw(21, 4, "No pinned version.");
   } else {
-    printw("%s", VersionState->versions[state->pinned_index].name);
+    mvprintw(21, 4, "%s", VersionState->versions[state->pinned_index].name);
   }
   if (state->selected == 0) {
     attroff(A_REVERSE);
   }
 
-  move(line_start + 5, 4);
+  move(23, 4);
   if (state->selected == 1) {
     attron(A_REVERSE);
   }
+  printw("Last Play:\n");
   if (state->last_index >= 0) {
-    printw("%s", VersionState->versions[state->last_index].name);
+    mvprintw(24, 4, "%s", VersionState->versions[state->last_index].name);
   } else {
-    printw("not play yet.");
+    mvprintw(24, 4, "not play yet.");
   }
   if (state->selected == 1) {
     attroff(A_REVERSE);
   }
+  mvprintw(row - 1, 0, "tap [Enter] to start");
 }
