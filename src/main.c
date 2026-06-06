@@ -1,19 +1,21 @@
 // main.c
-#include "home/home.h"
 #include "account/account.h"
 #include "config/config.h"
-#include "version/version.h"
+#include "home/home.h"
 #include "job/job.h"
+#include "version/version.h"
 #include <ncurses.h>
 
 // 函数声明
+void title_bar(int bigp);
 
 int main() {
-  int ch = 'V';
+  int ch = 'T';
   int bigp = 0;
   int middlep = 0;
 
   // 初始化所有页面的状态
+  HomeState home_state = {0};
   VersionState version_state = {0};
   ConfigState config_state = {0};
   AccountState account_state = {0};
@@ -26,6 +28,7 @@ int main() {
   keypad(stdscr, TRUE);
 
   // 初始化所有页面数据
+  home_init(&home_state, &version_state);
   config_init(&config_state);
   account_init(&account_state);
   init_versions(&version_state, &config_state);
@@ -33,24 +36,27 @@ int main() {
   while (1) {
     int bigpp = bigp;
     switch (ch) {
-    case 'V':
+    case 'T':
       bigp = 0;
-        init_versions(&version_state, &config_state);
+      break;
+    case 'V':
+      bigp = 1;
+      init_versions(&version_state, &config_state);
       break;
     case 'C':
-      bigp = 1;
-      if (bigpp == 1) {
+      bigp = 2;
+      if (bigpp == 2) {
         config_init(&config_state);
       }
       break;
     case 'A':
-      bigp = 2;
+      bigp = 3;
       break;
     case 'L':
-      bigp = (bigp + 1) % 3;
+      bigp = (bigp + 1) % 4;
       break;
     case 'H':
-      bigp = (bigp + 2) % 3;
+      bigp = (bigp + 3) % 4;
       break;
     case 'q':
       // 清理所有资源
@@ -71,19 +77,26 @@ int main() {
     //   account_write(&account_state);
     // }
 
-    if (bigp == 0 && bigpp != 0) {
+    if (bigp == 1 && bigpp != 1) {
       init_versions(&version_state, &config_state);
     }
 
     switch (bigp) {
     case 0:
-      version_page(ch, &middlep, &version_state, &config_state);
+      home_page(ch, &middlep, &home_state, &version_state);
+      title_bar(bigp);
       break;
     case 1:
-      config_page(ch, &middlep, &config_state);
+      version_page(ch, &middlep, &version_state, &config_state);
+      title_bar(bigp);
       break;
     case 2:
+      config_page(ch, &middlep, &config_state);
+      title_bar(bigp);
+      break;
+    case 3:
       account_page(ch, &middlep, &account_state);
+      title_bar(bigp);
       break;
     }
 
@@ -93,3 +106,45 @@ int main() {
   endwin();
   return 0;
 }
+
+void title_bar(int bigp) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+
+  switch (bigp) {
+  case 0:
+    move(0, 0);
+    attron(A_REVERSE);
+    printw("[T]mcl");
+    attroff(A_REVERSE);
+    printw(" [V]ersion [C]onfig [A]ccount");
+    mvprintw(0, col - 15, "tap [q] to quit");
+    break;
+  case 1:
+    move(0, 0);
+    printw("[T]mcl ");
+    attron(A_REVERSE);
+    printw("[V]ersion");
+    attroff(A_REVERSE);
+    printw(" [C]onfig [A]ccount");
+    mvprintw(0, col - 15, "tap [q] to quit");
+    break;
+  case 2:
+    move(0, 0);
+    printw("[T]mcl [V]ersion ");
+    attron(A_REVERSE);
+    printw("[C]onfig");
+    attroff(A_REVERSE);
+    printw(" [A]ccount");
+    mvprintw(0, col - 15, "tap [q] to quit");
+    break;
+  case 3:
+    move(0, 0);
+    printw("[T]mcl [V]ersion [C]onfig ");
+    attron(A_REVERSE);
+    printw("[A]ccount");
+    attroff(A_REVERSE);
+    mvprintw(0, col - 15, "tap [q] to quit");
+    break;
+  }
+};

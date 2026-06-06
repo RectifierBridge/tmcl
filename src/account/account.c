@@ -85,8 +85,8 @@ void account_page(int ch, int *middlep, AccountState *state) {
     break;
   }
 
-  mvprintw(2, 2, "    Type       Name");
-  mvprintw(3, 2, "    ----       ----");
+  mvprintw(2, 2, "  Type       Name");
+  mvprintw(3, 2, "  ----       ----");
   // 显示账户列表
   int start_y = 4;
   int max_display = row - start_y - 3;
@@ -104,9 +104,9 @@ void account_page(int ch, int *middlep, AccountState *state) {
     // 显示账户状态和基本信息
     char status[4];
     if (state->accounts[i].selected) {
-      strcpy(status, "[*]");
+      strcpy(status, "*");
     } else {
-      strcpy(status, "[ ]");
+      strcpy(status, " ");
     }
 
     printw("%s %s    %s", status, state->accounts[i].type,

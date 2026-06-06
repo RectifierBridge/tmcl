@@ -1,12 +1,12 @@
 # 定义变量
 CC = gcc
-CFLAGS = -Wall -c -Isrc -Isrc/account -Isrc/config -Isrc/version
+CFLAGS = -Wall -c -Isrc -Isrc/account -Isrc/config -Isrc/version -Isrc/home
 LIBS = -lncurses -lcjson
 TARGET = tmcl
 
 # 查找所有源文件（包括子目录）
 SOURCES := $(wildcard src/*.c) \
-           $(wildcard src/tmcl/*.c) \
+           $(wildcard src/home/*.c) \
            $(wildcard src/account/*.c) \
            $(wildcard src/config/*.c) \
            $(wildcard src/version/*.c)
@@ -30,7 +30,7 @@ build/%.o: src/%.c
 clean:
 	rm -rf build/* $(TARGET)
 
-# 安装（示例）
+# 安装
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin/
 

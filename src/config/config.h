@@ -2,7 +2,8 @@
 #define CONFIG_H
 
 #include <ncurses.h>
-//"java_path", "memory", "game_dir", "jvm_args",  "download_cource", "mod_source"
+//"java_path", "memory", "game_dir", "jvm_args",  "download_cource",
+//"mod_source", "pinned_version"
 // 配置项结构
 typedef struct {
   char key[32];

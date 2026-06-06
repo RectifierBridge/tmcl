@@ -12,12 +12,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// 函数声明
 char *classpath_from_json(VersionState *state, char *minecraft_dir);
-
-// 名称排序
-// int compare_strings(const void *a, const void *b) {
-//   return strcmp(*(const char **)a, *(const char **)b);
-// }
+void bottom_bar(int *middlep);
 
 // 初始化版本数据
 void init_versions(VersionState *state, ConfigState *ConfigState) {
@@ -28,7 +25,6 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
   char *gameDir = ConfigState->items[2].value;
   char versionDir[256];
 
-  // 使用snprintf避免缓冲区溢出
   snprintf(versionDir, sizeof(versionDir), "%s/versions/", gameDir);
 
   DIR *dirp = opendir(versionDir);
@@ -147,7 +143,7 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
                       sizeof(state->versions[count].modloader) - 1);
               state->versions[count]
                   .modloader[sizeof(state->versions[count].modloader) - 1] =
-                  '\0'; // 修正为 modloader
+                  '\0';
             } else if (mod_loader_forge) {
               strncpy(state->versions[count].modloader, "forge",
                       sizeof(state->versions[count].modloader) - 1);
@@ -189,8 +185,10 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
 
 // 启动版本函数
 void begin_version(VersionState *state, ConfigState *ConfigState) {
-  endwin();
   int index = state->selected_version;
+  if (state->version_count == 0 || index < 0 || index >= state->version_count)
+    return;
+  endwin();
   char *minecraft_dir = ConfigState->items[2].value;
   char version_dir[256]; // .../versions/[version]
   snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", minecraft_dir,
@@ -268,6 +266,13 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   }
 }
 
+// pin_version函数
+void pin_version(VersionState *state, ConfigState *ConfigState) {
+  strcpy(ConfigState->items[6].value,
+         state->versions[state->selected_version].name);
+  config_write(ConfigState);
+}
+
 // mod函数
 void mod(VersionState *state, int index) {
   if (index < 0 || index >= state->version_count)
@@ -275,7 +280,7 @@ void mod(VersionState *state, int index) {
 }
 // 重命名版本函数
 void rename_version(VersionState *state, int index) {
-  if (index < 0 || index >= state->version_count)
+  if (index < 0 || index >= state->version_count || state->version_count == 0)
     return;
 
   int row, col;
@@ -375,23 +380,27 @@ void version_page(int ch, int *middlep, VersionState *state,
     *middlep = 1;
     mod(state, state->selected_version);
     break;
+  case 'p':
+    *middlep = 2;
+    pin_version(state, ConfigState);
+    break;
   case 'r': // rename 操作 - 直接执行
     rename_version(state, state->selected_version);
-    *middlep = 2; // 移动光标到 rename
+    *middlep = 3; // 移动光标到 rename
     break;
   case 'n': // new 操作 - 直接执行
     new_version(state);
-    *middlep = 3; // 移动光标到 new
+    *middlep = 4; // 移动光标到 new
     break;
   case 'd': // delete 操作 - 直接执行
     delete_version(state, state->selected_version, ConfigState);
-    *middlep = 4; // 移动光标到 delete
+    *middlep = 5; // 移动光标到 delete
     break;
   case 'h':                        // 在操作间向左移动
-    *middlep = (*middlep + 4) % 5; // 循环向左（5个操作）
+    *middlep = (*middlep + 5) % 6; // 循环向左（5个操作）
     break;
   case 'l':                        // 在操作间向右移动
-    *middlep = (*middlep + 1) % 5; // 循环向右（5个操作）
+    *middlep = (*middlep + 1) % 6; // 循环向右（5个操作）
     break;
   case '\n': // 回车键执行当前操作
     switch (*middlep) {
@@ -401,13 +410,16 @@ void version_page(int ch, int *middlep, VersionState *state,
     case 1: // mod
       mod(state, state->selected_version);
       break;
-    case 2: // rename
+    case 2: // pin
+      pin_version(state, ConfigState);
+      break;
+    case 3: // rename
       rename_version(state, state->selected_version);
       break;
-    case 3: // new
+    case 4: // new
       new_version(state);
       break;
-    case 4: // delete
+    case 5: // delete
       delete_version(state, state->selected_version, ConfigState);
       break;
     }
@@ -415,8 +427,8 @@ void version_page(int ch, int *middlep, VersionState *state,
   }
 
   // 显示版本列表标题
-  mvprintw(2, 2, "Type    Modloader Version   Name");
-  mvprintw(3, 2, "----    --------- -------   ----");
+  mvprintw(2, 4, "Type    Modloader Version   Name");
+  mvprintw(3, 4, "----    --------- -------   ----");
 
   // 显示版本列表
   int start_y = 4;                     // 列表开始的行
@@ -434,11 +446,12 @@ void version_page(int ch, int *middlep, VersionState *state,
       attron(A_REVERSE);
     }
 
-    // 如果是选定版本，标记星号
-    // char chosen_mark = (i == state->chosen_version) ? '*' : ' ';
-
-    // 显示版本信息：类型、模组加载器、版本号、名字
-    printw("%-7s %-9s %-9s %s", state->versions[i].type,
+    char pin[4] = " ";
+    if (strcmp(ConfigState->items[6].value, state->versions[i].name) == 0) {
+      strcpy(pin, "*");
+    }
+    // 显示版本信息：pin否、类型、模组加载器、版本号、名字
+    printw("%s %-7s %-9s %-9s %s", pin, state->versions[i].type,
            state->versions[i].modloader, state->versions[i].version,
            state->versions[i].name);
 
@@ -456,49 +469,7 @@ void version_page(int ch, int *middlep, VersionState *state,
   }
 
   // 底部操作提示
-  switch (*middlep) {
-  case 0:
-    attron(A_REVERSE);
-    mvprintw(row - 1, 0, "[b]egin");
-    attroff(A_REVERSE);
-    printw(" [m]od [r]ename [n]ew [d]elete");
-    break;
-  case 1:
-    mvprintw(row - 1, 0, "[b]egin ");
-    attron(A_REVERSE);
-    printw("[m]od");
-    attroff(A_REVERSE);
-    printw(" [r]ename [n]ew [d]elete");
-    break;
-  case 2:
-    mvprintw(row - 1, 0, "[b]egin [m]od ");
-    attron(A_REVERSE);
-    printw("[r]ename");
-    attroff(A_REVERSE);
-    printw(" [n]ew [d]elete");
-    break;
-  case 3:
-    mvprintw(row - 1, 0, "[b]egin [m]od [r]ename ");
-    attron(A_REVERSE);
-    printw("[n]ew");
-    attroff(A_REVERSE);
-    printw(" [d]elete");
-    break;
-  case 4:
-    mvprintw(row - 1, 0, "[b]egin [m]od [r]ename [n]ew ");
-    attron(A_REVERSE);
-    printw("[d]elete");
-    attroff(A_REVERSE);
-    break;
-  }
-
-  // 页面标题和导航
-  move(0, 0);
-  attron(A_REVERSE);
-  printw("[V]ersion");
-  attroff(A_REVERSE);
-  printw(" [C]onfig [A]ccount");
-  mvprintw(0, col - 15, "tap [q] to quit");
+  bottom_bar(middlep);
 }
 
 // 从json读取并构建classpath
@@ -627,6 +598,55 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
     strcat(classpath, ".jar");
   }
   return classpath;
+}
+
+// bottom bar
+void bottom_bar(int *middlep) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+
+  switch (*middlep) {
+  case 0:
+    attron(A_REVERSE);
+    mvprintw(row - 1, 0, "[b]egin");
+    attroff(A_REVERSE);
+    printw(" [m]od [p]in [r]ename [n]ew [d]elete");
+    break;
+  case 1:
+    mvprintw(row - 1, 0, "[b]egin ");
+    attron(A_REVERSE);
+    printw("[m]od");
+    attroff(A_REVERSE);
+    printw(" [p]in [r]ename [n]ew [d]elete");
+    break;
+  case 2:
+    mvprintw(row - 1, 0, "[b]egin [m]od ");
+    attron(A_REVERSE);
+    printw("[p]in");
+    attroff(A_REVERSE);
+    printw(" [r]ename [n]ew [d]elete");
+    break;
+  case 3:
+    mvprintw(row - 1, 0, "[b]egin [m]od [p]in ");
+    attron(A_REVERSE);
+    printw("[r]ename");
+    attroff(A_REVERSE);
+    printw(" [n]ew [d]elete");
+    break;
+  case 4:
+    mvprintw(row - 1, 0, "[b]egin [m]od [p]in [r]ename ");
+    attron(A_REVERSE);
+    printw("[n]ew");
+    attroff(A_REVERSE);
+    printw(" [d]elete");
+    break;
+  case 5:
+    mvprintw(row - 1, 0, "[b]egin [m]od [p]in [r]ename [n]ew ");
+    attron(A_REVERSE);
+    printw("[d]elete");
+    attroff(A_REVERSE);
+    break;
+  }
 }
 
 // 清理版本数据
