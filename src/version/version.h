@@ -32,7 +32,7 @@ void free_versions(VersionState *state);
 void rename_version(VersionState *state, int index);
 void choose_version(VersionState *state, int index);
 void start_version(VersionState *state, int index);
-void new_version(VersionState *state);
+void new_version(VersionState *state, ConfigState *ConfigState);
 void delete_version(VersionState *state, int index, ConfigState *ConfigState);
 void begin_version(VersionState *state, ConfigState *ConfigState);
 

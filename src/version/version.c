@@ -1,6 +1,7 @@
 // version.c
 #include "version.h"
 #include "../config/config.h"
+#include "install.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
 #include <ncurses.h>
@@ -677,9 +678,10 @@ void rename_version(VersionState *state, int index) {
 }
 
 // 新建版本函数
-void new_version(VersionState *state) {
-  // 这里可以添加新建版本的逻辑
-  // 例如：弹出对话框让用户输入版本信息
+void new_version(VersionState *state, ConfigState *ConfigState) {
+  install_page(state, ConfigState);
+  // 刷新版本列表
+  init_versions(state, ConfigState);
 }
 
 // 删除版本函数
@@ -758,7 +760,7 @@ void version_page(int ch, int *middlep, VersionState *state,
     *middlep = 3; // 移动光标到 rename
     break;
   case 'n': // new 操作 - 直接执行
-    new_version(state);
+    new_version(state, ConfigState);
     *middlep = 4; // 移动光标到 new
     break;
   case 'd': // delete 操作 - 直接执行
@@ -786,7 +788,7 @@ void version_page(int ch, int *middlep, VersionState *state,
       rename_version(state, state->selected_version);
       break;
     case 4: // new
-      new_version(state);
+      new_version(state, ConfigState);
       break;
     case 5: // delete
       delete_version(state, state->selected_version, ConfigState);
