@@ -158,6 +158,46 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
                   '\0'; // 补充缺失的终止符
             }
 
+            // 提取 mainClass
+            cJSON *main_class = cJSON_GetObjectItem(json, "mainClass");
+            if (main_class && main_class->valuestring) {
+              strncpy(state->versions[count].mainClass, main_class->valuestring,
+                      sizeof(state->versions[count].mainClass) - 1);
+              state->versions[count]
+                  .mainClass[sizeof(state->versions[count].mainClass) - 1] =
+                  '\0';
+            } else {
+              strncpy(state->versions[count].mainClass,
+                      "net.minecraft.client.main.Main",
+                      sizeof(state->versions[count].mainClass) - 1);
+              state->versions[count]
+                  .mainClass[sizeof(state->versions[count].mainClass) - 1] =
+                  '\0';
+            }
+
+            // 提取 inheritsFrom
+            cJSON *inherits = cJSON_GetObjectItem(json, "inheritsFrom");
+            if (inherits && inherits->valuestring) {
+              strncpy(state->versions[count].inheritsFrom,
+                      inherits->valuestring,
+                      sizeof(state->versions[count].inheritsFrom) - 1);
+              state->versions[count]
+                  .inheritsFrom[sizeof(state->versions[count].inheritsFrom) -
+                                1] = '\0';
+            } else {
+              state->versions[count].inheritsFrom[0] = '\0';
+            }
+
+            // 提取 javaVersion.majorVersion
+            state->versions[count].javaMajor = 0;
+            cJSON *java_ver = cJSON_GetObjectItem(json, "javaVersion");
+            if (java_ver) {
+              cJSON *major = cJSON_GetObjectItem(java_ver, "majorVersion");
+              if (major && cJSON_IsNumber(major)) {
+                state->versions[count].javaMajor = major->valueint;
+              }
+            }
+
             count++;
           }
           cJSON_Delete(json); // 释放 cJSON 对象
@@ -183,91 +223,415 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
   state->version_count = count;
 }
 
-// 启动版本函数
+// ======================== 启动辅助函数 ========================
+
+// 替换参数占位符 ${...}
+static void sub_arg(char *dest, const char *src, size_t dest_size,
+                    const char *vname, const char *gdir, const char *adir,
+                    const char *aidx, const char *ndir, const char *cp,
+                    const char *uname, const char *uuid, const char *tok,
+                    const char *utype, const char *vtype) {
+  dest[0] = '\0';
+  size_t di = 0;
+  const char *p = src;
+
+  while (*p && di < dest_size - 1) {
+    if (*p == '$' && *(p + 1) == '{') {
+      const char *end = strchr(p + 2, '}');
+      if (end) {
+        size_t plen = end - p - 2;
+        char key[64] = {0};
+        if (plen < sizeof(key))
+          memcpy(key, p + 2, plen);
+
+        const char *val = NULL;
+        if (strcmp(key, "auth_player_name") == 0)      val = uname;
+        else if (strcmp(key, "version_name") == 0)     val = vname;
+        else if (strcmp(key, "game_directory") == 0)   val = gdir;
+        else if (strcmp(key, "assets_root") == 0)      val = adir;
+        else if (strcmp(key, "assets_index_name") == 0) val = aidx;
+        else if (strcmp(key, "auth_uuid") == 0)        val = uuid;
+        else if (strcmp(key, "auth_access_token") == 0) val = tok;
+        else if (strcmp(key, "user_type") == 0)        val = utype;
+        else if (strcmp(key, "version_type") == 0)     val = vtype;
+        else if (strcmp(key, "natives_directory") == 0) val = ndir;
+        else if (strcmp(key, "launcher_name") == 0)    val = "tmcl";
+        else if (strcmp(key, "launcher_version") == 0) val = "0.0.1";
+        else if (strcmp(key, "classpath") == 0)        val = cp;
+        else if (strcmp(key, "clientid") == 0)         val = "0";
+        else if (strcmp(key, "auth_xuid") == 0)        val = "0";
+        else if (strcmp(key, "user_properties") == 0) val = "{}";
+
+        if (val) {
+          size_t rlen = strlen(val);
+          if (di + rlen < dest_size) {
+            memcpy(dest + di, val, rlen);
+            di += rlen;
+            dest[di] = '\0';
+          }
+        }
+        p = end + 1;
+        continue;
+      }
+    }
+    dest[di++] = *p++;
+    dest[di] = '\0';
+  }
+}
+
+// 检查 rules 数组是否允许当前平台 (linux)
+static int rules_ok(cJSON *rules) {
+  if (!rules || !cJSON_IsArray(rules)) return 1; // 无规则则允许
+  int allowed = 0;
+  cJSON *rule;
+  cJSON_ArrayForEach(rule, rules) {
+    cJSON *action = cJSON_GetObjectItem(rule, "action");
+    cJSON *os = cJSON_GetObjectItem(rule, "os");
+    cJSON *features = cJSON_GetObjectItem(rule, "features");
+
+    // 无 os 且无 features → 全局规则
+    if (!os && !features) {
+      if (action && strcmp(action->valuestring, "disallow") == 0) allowed = 0;
+      if (action && strcmp(action->valuestring, "allow") == 0) allowed = 1;
+      continue;
+    }
+
+    if (os) {
+      cJSON *os_name = cJSON_GetObjectItem(os, "name");
+      if (os_name && strcmp(os_name->valuestring, "linux") == 0) {
+        if (action && strcmp(action->valuestring, "allow") == 0) allowed = 1;
+        if (action && strcmp(action->valuestring, "disallow") == 0) allowed = 0;
+      }
+    }
+  }
+  return allowed;
+}
+
+// 读取单个版本的 JSON 文件
+static cJSON *read_ver_json(const char *mcdir, const char *vname) {
+  char path[512];
+  snprintf(path, sizeof(path), "%s/versions/%s/%s.json", mcdir, vname, vname);
+  FILE *f = fopen(path, "r");
+  if (!f) return NULL;
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  char *data = malloc(sz + 1);
+  if (!data) { fclose(f); return NULL; }
+  fread(data, 1, sz, f);
+  data[sz] = '\0';
+  fclose(f);
+  cJSON *json = cJSON_Parse(data);
+  free(data);
+  return json;
+}
+
+// 将一个 arguments 数组（jvm 或 game）展开追加到 args 列表
+static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
+                        char ***tofree, int *fc, const char *vname,
+                        const char *gdir, const char *adir, const char *aidx,
+                        const char *ndir, const char *cp, const char *uname,
+                        const char *uuid, const char *tok, const char *utype,
+                        const char *vtype) {
+  if (!arr || !cJSON_IsArray(arr)) return;
+  cJSON *it;
+  cJSON_ArrayForEach(it, arr) {
+    if (*ac >= max_ac - 1) break;
+
+    if (cJSON_IsString(it)) {
+      char *buf = malloc(1024);
+      sub_arg(buf, it->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
+              uname, uuid, tok, utype, vtype);
+      args[(*ac)++] = buf;
+      (*tofree)[(*fc)++] = buf;
+    } else if (cJSON_IsObject(it)) {
+      cJSON *rules = cJSON_GetObjectItem(it, "rules");
+      if (!rules_ok(rules)) continue;
+      cJSON *val = cJSON_GetObjectItem(it, "value");
+      if (!val) continue;
+      if (cJSON_IsString(val)) {
+        char *buf = malloc(1024);
+        sub_arg(buf, val->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
+                uname, uuid, tok, utype, vtype);
+        args[(*ac)++] = buf;
+        (*tofree)[(*fc)++] = buf;
+      } else if (cJSON_IsArray(val)) {
+        cJSON *vi;
+        cJSON_ArrayForEach(vi, val) {
+          if (*ac >= max_ac - 1) break;
+          if (cJSON_IsString(vi)) {
+            char *buf = malloc(1024);
+            sub_arg(buf, vi->valuestring, 1024, vname, gdir, adir, aidx, ndir,
+                    cp, uname, uuid, tok, utype, vtype);
+            args[(*ac)++] = buf;
+            (*tofree)[(*fc)++] = buf;
+          }
+        }
+      }
+    }
+  }
+}
+
+// 处理旧版 minecraftArguments 字符串（按空格拆分）
+static void legacy_args(const char *mc_args, char **args, int *ac, int max_ac,
+                        char ***tofree, int *fc, const char *vname,
+                        const char *gdir, const char *adir, const char *aidx,
+                        const char *ndir, const char *cp, const char *uname,
+                        const char *uuid, const char *tok, const char *utype,
+                        const char *vtype) {
+  if (!mc_args) return;
+  char *dup = strdup(mc_args);
+  char *saveptr;
+  char *token = strtok_r(dup, " ", &saveptr);
+  while (token && *ac < max_ac - 1) {
+    char *buf = malloc(1024);
+    sub_arg(buf, token, 1024, vname, gdir, adir, aidx, ndir, cp, uname, uuid,
+            tok, utype, vtype);
+    args[(*ac)++] = buf;
+    (*tofree)[(*fc)++] = buf;
+    token = strtok_r(NULL, " ", &saveptr);
+  }
+  free(dup);
+}
+
+// 根据 majorVersion 查找对应的 Java 可执行文件
+static int find_java_for_version(int major, char *out, size_t out_size) {
+  // 首先尝试常见路径
+  const char *candidates[] = {
+      "/usr/lib/jvm/java-%d-openjdk/bin/java",
+      "/usr/lib/jvm/jdk-%d/bin/java",
+      "/usr/lib/jvm/java-%d/bin/java",
+      "/usr/lib/jvm/jre-%d/bin/java",
+      "/usr/lib/jvm/java-%d-openjdk/jre/bin/java",
+      NULL,
+  };
+  for (int i = 0; candidates[i]; i++) {
+    char path[512];
+    snprintf(path, sizeof(path), candidates[i], major);
+    if (access(path, X_OK) == 0) {
+      strncpy(out, path, out_size - 1);
+      out[out_size - 1] = '\0';
+      return 1;
+    }
+  }
+  return 0;
+}
+
+// ======================== 启动版本函数 ========================
 void begin_version(VersionState *state, ConfigState *ConfigState) {
-  int index = state->selected_version;
-  if (state->version_count == 0 || index < 0 || index >= state->version_count)
+  int idx = state->selected_version;
+  if (state->version_count == 0 || idx < 0 || idx >= state->version_count)
     return;
 
-  strcpy(ConfigState->items[7].value,
-         state->versions[state->selected_version].name);
+  strcpy(ConfigState->items[7].value, state->versions[idx].name);
+  config_write(ConfigState);
 
   endwin();
-  char *minecraft_dir = ConfigState->items[2].value;
-  char version_dir[256]; // .../versions/[version]
-  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", minecraft_dir,
-           state->versions[index].name);
-  char *java_path = ConfigState->items[0].value;
+  char *mcdir = ConfigState->items[2].value;
+  const char *vname = state->versions[idx].name;
+  const char *inh = state->versions[idx].inheritsFrom;
 
-  // 准备参数
-  char *args[100];
-  int arg_count = 0;
+  // 构建 classpath（含继承链）
+  char classpath[16384];
+  strcpy(classpath, classpath_from_json(state, mcdir));
 
-  char max_memory[64];
-  char max_memory_arg[70];
-  strcpy(max_memory, ConfigState->items[1].value);
-  snprintf(max_memory_arg, sizeof(max_memory_arg), "-Xmx%sm", max_memory);
+  // 读取版本 JSON（优先用子版本，其次父版本的信息）
+  cJSON *child_json = read_ver_json(mcdir, vname);
+  cJSON *parent_json = (inh && strlen(inh) > 0) ? read_ver_json(mcdir, inh)
+                                                 : NULL;
 
-  char assets_path[164];
-  snprintf(assets_path, sizeof(assets_path), "%s/assets", minecraft_dir);
+  // ---- 决定 mainClass ----
+  char main_class[128];
+  strncpy(main_class, state->versions[idx].mainClass, sizeof(main_class) - 1);
+  main_class[sizeof(main_class) - 1] = '\0';
 
-  char classpath[10240];
-  strcpy(classpath, classpath_from_json(state, minecraft_dir));
+  // ---- 决定 assetIndex ----
+  char asset_index[32] = "legacy";
+  cJSON *asset_idx = NULL;
+  if (child_json)
+    asset_idx = cJSON_GetObjectItem(child_json, "assetIndex");
+  if (!asset_idx && parent_json)
+    asset_idx = cJSON_GetObjectItem(parent_json, "assetIndex");
+  if (asset_idx) {
+    cJSON *aid = cJSON_GetObjectItem(asset_idx, "id");
+    if (aid && aid->valuestring) {
+      strncpy(asset_index, aid->valuestring, sizeof(asset_index) - 1);
+      asset_index[sizeof(asset_index) - 1] = '\0';
+    }
+  }
 
-  args[arg_count++] = java_path;
-  args[arg_count++] = max_memory_arg;
-  args[arg_count++] = "-Djava.library.path=/home/xy/.minecraft/versions/"
-                      "1.21.10/natives-linux-x86_64";
-  args[arg_count++] = "-cp";
-  args[arg_count++] = classpath;
-  args[arg_count++] = "net.minecraft.client.main.Main";
-  args[arg_count++] = "--username";
-  args[arg_count++] = "rectifier";
-  args[arg_count++] = "--version";
-  args[arg_count++] = "1.21.10";
-  args[arg_count++] = "--gameDir";
-  args[arg_count++] = minecraft_dir;
-  args[arg_count++] = "--assetsDir";
-  args[arg_count++] = assets_path;
-  args[arg_count++] = "--assetIndex";
-  args[arg_count++] = "27";
-  args[arg_count++] = "--accessToken";
-  args[arg_count++] = "offline_token";
-  args[arg_count++] = "--uuid";
-  args[arg_count++] = "00000000-0000-0000-0000-000000000000";
-  args[arg_count++] = "--userType";
-  args[arg_count++] = "mojang";
-  args[arg_count] = NULL; // 参数列表必须以NULL结尾
+  // ---- 找 natives 目录 ----
+  char natives_dir[512] = "";
+  char vdir[512];
+  snprintf(vdir, sizeof(vdir), "%s/versions/%s", mcdir, vname);
+  DIR *ndp = opendir(vdir);
+  if (ndp) {
+    struct dirent *dent;
+    while ((dent = readdir(ndp)) != NULL) {
+      if (strncmp(dent->d_name, "natives", 7) == 0 &&
+          dent->d_type == DT_DIR) {
+        snprintf(natives_dir, sizeof(natives_dir), "%s/versions/%s/%s", mcdir,
+                 vname, dent->d_name);
+        break;
+      }
+    }
+    closedir(ndp);
+  }
+  // 回退到默认 natives 路径
+  if (natives_dir[0] == '\0') {
+    snprintf(natives_dir, sizeof(natives_dir), "%s/versions/%s/natives", mcdir,
+             vname);
+  }
 
-  // 切换到Minecraft目录
-  if (chdir(minecraft_dir) != 0) {
+  // ---- 路径 ----
+  char assets_dir[256];
+  snprintf(assets_dir, sizeof(assets_dir), "%s/assets", mcdir);
+
+  // ---- 账户信息（目前为离线）----
+  const char *uname = "Player";
+  const char *uuid_str = "00000000-0000-0000-0000-000000000000";
+  const char *token_str = "offline_token";
+  const char *utype_str = "mojang";
+  const char *vtype_str = state->versions[idx].type;
+
+  // ---- 内存 ----
+  char mem_arg[80];
+  snprintf(mem_arg, sizeof(mem_arg), "-Xmx%sm", ConfigState->items[1].value);
+
+  // ---- 构建 args ----
+  char *args[300];
+  int ac = 0;
+  char **tofree = malloc(300 * sizeof(char *));
+  int fc = 0;
+
+  // 使用版本匹配的 Java（如果有指定 majorVersion）
+  int jmajor = state->versions[idx].javaMajor;
+  char java_bin[512];
+  if (jmajor > 0 && find_java_for_version(jmajor, java_bin, sizeof(java_bin))) {
+    args[ac++] = strdup(java_bin);
+    tofree[fc++] = args[ac - 1];
+    printf("  Java: %s (required major version: %d)\n", java_bin, jmajor);
+  } else {
+    args[ac++] = ConfigState->items[0].value; // 使用配置的默认 java
+  }
+  args[ac++] = mem_arg;
+
+  // ---- JVM 参数 ----
+  cJSON *args_obj = NULL;
+  if (child_json)
+    args_obj = cJSON_GetObjectItem(child_json, "arguments");
+  if (!args_obj && parent_json)
+    args_obj = cJSON_GetObjectItem(parent_json, "arguments");
+
+  if (args_obj) {
+    // 新版 arguments 格式
+    cJSON *jvm = cJSON_GetObjectItem(args_obj, "jvm");
+    append_args(jvm, args, &ac, 300, &tofree, &fc, vname, vdir, assets_dir,
+                asset_index, natives_dir, classpath, uname, uuid_str,
+                token_str, utype_str, vtype_str);
+
+    // 确保 -cp 已在 JVM 参数末尾（JSON 中通常有，但也做一次兜底）
+    if (ac < 300 - 4) {
+      args[ac++] = "-cp";
+      args[ac++] = classpath;
+    }
+
+    // 添加主类
+    args[ac++] = main_class;
+
+    // 游戏参数
+    cJSON *game = cJSON_GetObjectItem(args_obj, "game");
+    append_args(game, args, &ac, 300, &tofree, &fc, vname, vdir, assets_dir,
+                asset_index, natives_dir, classpath, uname, uuid_str,
+                token_str, utype_str, vtype_str);
+  } else {
+    // 旧版格式：使用 minecraftArguments
+    const char *mc_args = NULL;
+    if (child_json)
+      mc_args =
+          cJSON_GetStringValue(cJSON_GetObjectItem(child_json,
+                                                    "minecraftArguments"));
+    if (!mc_args && parent_json)
+      mc_args =
+          cJSON_GetStringValue(cJSON_GetObjectItem(parent_json,
+                                                    "minecraftArguments"));
+
+    // 旧版 JVM 参数
+    args[ac++] = "-Djava.library.path=";
+    args[ac - 1] = malloc(1024);
+    tofree[fc++] = args[ac - 1];
+    snprintf(args[ac - 1], 1024, "-Djava.library.path=%s", natives_dir);
+
+    args[ac++] = "-cp";
+    args[ac++] = classpath;
+    args[ac++] = main_class;
+
+    if (mc_args) {
+      legacy_args(mc_args, args, &ac, 300, &tofree, &fc, vname, vdir,
+                  assets_dir, asset_index, natives_dir, classpath, uname,
+                  uuid_str, token_str, utype_str, vtype_str);
+    } else {
+      // 最简回退
+      args[ac++] = "--username";
+      args[ac++] = (char *)uname; // const cast safe for exec
+      args[ac++] = "--version";
+      args[ac++] = (char *)vname;
+      args[ac++] = "--gameDir";
+      args[ac++] = vdir;
+      args[ac++] = "--assetsDir";
+      args[ac++] = assets_dir;
+      args[ac++] = "--assetIndex";
+      args[ac++] = asset_index;
+      args[ac++] = "--accessToken";
+      args[ac++] = (char *)token_str;
+      args[ac++] = "--uuid";
+      args[ac++] = (char *)uuid_str;
+      args[ac++] = "--userType";
+      args[ac++] = (char *)utype_str;
+    }
+  }
+
+  args[ac] = NULL;
+
+  // ---- 清理 JSON ----
+  if (child_json) cJSON_Delete(child_json);
+  if (parent_json) cJSON_Delete(parent_json);
+
+  // ---- 输出信息 ----
+  printf("Launching %s (%s)\n", vname, state->versions[idx].modloader);
+  printf("  Main class: %s\n", main_class);
+  printf("  Asset index: %s\n", asset_index);
+  printf("  Natives dir: %s\n", natives_dir);
+  printf("  Classpath length: %zu\n", strlen(classpath));
+
+  // ---- 执行 ----
+  if (chdir(vdir) != 0) {
     perror("chdir failed");
   }
 
-  // 创建子进程执行游戏
   pid_t pid = fork();
   if (pid == 0) {
-    // 子进程
-    execvp(java_path, args);
-    // 如果execvp返回，说明出错了
+    execvp(args[0], args);
     perror("execvp failed");
     exit(1);
   } else if (pid > 0) {
-    // 父进程
-    printf("Minecraft启动中 (PID: %d)...\n", pid);
-
+    printf("Minecraft 启动中 (PID: %d)...\n", pid);
     int status;
     waitpid(pid, &status, 0);
-
     if (WIFEXITED(status)) {
-      printf("Minecraft已退出，退出码: %d\n", WEXITSTATUS(status));
+      printf("Minecraft 已退出，退出码: %d\n", WEXITSTATUS(status));
     } else if (WIFSIGNALED(status)) {
-      printf("Minecraft被信号终止: %d\n", WTERMSIG(status));
+      printf("Minecraft 被信号终止: %d\n", WTERMSIG(status));
     }
-
   } else {
     perror("fork failed");
   }
+
+  // ---- 释放动态分配的参数 ----
+  for (int i = 0; i < fc; i++) {
+    free(tofree[i]);
+  }
+  free(tofree);
 }
 
 // pin_version函数
@@ -476,23 +840,16 @@ void version_page(int ch, int *middlep, VersionState *state,
   bottom_bar(middlep);
 }
 
-// 从json读取并构建classpath
-char *classpath_from_json(VersionState *state, char *minecraft_dir) {
-  int index = state->selected_version;
+// 辅助函数：将某个版本的 JSON 中的 libraries 追加到 classpath
+void append_json_libraries(const char *minecraft_dir, const char *version_name,
+                           char *classpath, size_t classpath_size) {
   char json_path[512];
-  static char classpath[10240];
-  char version_dir[256]; // .../versions/[version]
-  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", minecraft_dir,
-           state->versions[index].name);
+  snprintf(json_path, sizeof(json_path), "%s/versions/%s/%s.json",
+           minecraft_dir, version_name, version_name);
 
-  snprintf(json_path, sizeof(json_path), "%s/%s.json", version_dir,
-           state->versions[index].name);
-
-  // 读取json文件
   FILE *file = fopen(json_path, "r");
   if (!file) {
-    perror("无法打开json文件");
-    return NULL;
+    return;
   }
 
   fseek(file, 0, SEEK_END);
@@ -502,34 +859,26 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
   char *json_data = malloc(file_size + 1);
   if (!json_data) {
     fclose(file);
-    return NULL;
+    return;
   }
 
   fread(json_data, 1, file_size, file);
   json_data[file_size] = '\0';
   fclose(file);
 
-  // 解析JSON
   cJSON *root = cJSON_Parse(json_data);
   if (!root) {
-    printf("JSON解析失败: %s\n", cJSON_GetErrorPtr());
     free(json_data);
-    return NULL;
+    return;
   }
 
-  // 获取libraries数组
   cJSON *libraries = cJSON_GetObjectItem(root, "libraries");
   if (!libraries) {
-    printf("找不到libraries字段\n");
     cJSON_Delete(root);
     free(json_data);
-    return NULL;
+    return;
   }
 
-  // 构建classpath
-  classpath[0] = '\0';
-
-  // 首先添加所有库文件
   cJSON *library;
   cJSON_ArrayForEach(library, libraries) {
     // 检查rules（如果有的话）
@@ -542,7 +891,7 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
         if (action && os) {
           cJSON *os_name = cJSON_GetObjectItem(os, "name");
           if (os_name && strcmp(cJSON_GetStringValue(os_name), "linux") != 0) {
-            continue; // 跳过非linux平台的库
+            continue;
           }
         }
       }
@@ -559,8 +908,9 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
           snprintf(lib_path, sizeof(lib_path), "%s/libraries/%s", minecraft_dir,
                    cJSON_GetStringValue(path));
 
-          // 检查库文件是否存在
-          if (strlen(classpath) > 0) {
+          size_t current_len = strlen(classpath);
+          if (current_len > 0 &&
+              current_len + strlen(lib_path) + 2 < classpath_size) {
             strcat(classpath, ":");
           }
           strcat(classpath, lib_path);
@@ -570,7 +920,6 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
       // 如果没有downloads字段，尝试从name字段构建路径
       cJSON *name = cJSON_GetObjectItem(library, "name");
       if (name) {
-        // 解析Maven格式的name: group:artifact:version
         char *name_str = strdup(cJSON_GetStringValue(name));
         char *saveptr;
         char *group = strtok_r(name_str, ":", &saveptr);
@@ -578,13 +927,21 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
         char *version = strtok_r(NULL, ":", &saveptr);
 
         if (group && artifact && version) {
-          // 构建Maven路径
+          // 将 group 中的 '.' 替换为 '/'（Maven 路径格式）
+          char group_path[256];
+          snprintf(group_path, sizeof(group_path), "%s", group);
+          for (char *gp = group_path; *gp; gp++) {
+            if (*gp == '.') *gp = '/';
+          }
+
           char lib_path[512];
           snprintf(lib_path, sizeof(lib_path),
-                   "%s/libraries/%s/%s/%s/%s-%s.jar", minecraft_dir, group,
+                   "%s/libraries/%s/%s/%s/%s-%s.jar", minecraft_dir, group_path,
                    artifact, version, artifact, version);
 
-          if (strlen(classpath) > 0) {
+          size_t current_len = strlen(classpath);
+          if (current_len > 0 &&
+              current_len + strlen(lib_path) + 2 < classpath_size) {
             strcat(classpath, ":");
           }
           strcat(classpath, lib_path);
@@ -593,14 +950,51 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
       }
     }
   }
-  if (strcmp(classpath, "") != 0) {
-    // 添加主游戏jar文件
-    strcat(classpath, ":");
-    strcat(classpath, version_dir);
-    strcat(classpath, "/");
-    strcat(classpath, state->versions[index].name);
-    strcat(classpath, ".jar");
+
+  cJSON_Delete(root);
+  free(json_data);
+}
+
+// 从json读取并构建classpath（支持继承链）
+char *classpath_from_json(VersionState *state, char *minecraft_dir) {
+  int index = state->selected_version;
+  static char classpath[16384];
+  char version_dir[256];
+  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", minecraft_dir,
+           state->versions[index].name);
+
+  classpath[0] = '\0';
+
+  // 1) 首先附加上父版本（inheritsFrom）的 libraries 和 jar
+  if (strlen(state->versions[index].inheritsFrom) > 0) {
+    append_json_libraries(minecraft_dir,
+                          state->versions[index].inheritsFrom, classpath,
+                          sizeof(classpath));
+
+    // 同时添加父版本的 jar（Fabric / 新版 Forge 需要）
+    if (strlen(classpath) > 0) {
+      strcat(classpath, ":");
+    }
+    char parent_jar[512];
+    snprintf(parent_jar, sizeof(parent_jar), "%s/versions/%s/%s.jar",
+             minecraft_dir, state->versions[index].inheritsFrom,
+             state->versions[index].inheritsFrom);
+    strcat(classpath, parent_jar);
   }
+
+  // 2) 然后附加当前版本的 libraries
+  append_json_libraries(minecraft_dir, state->versions[index].name, classpath,
+                        sizeof(classpath));
+
+  // 3) 最后添加主游戏 jar 文件
+  if (strlen(classpath) > 0) {
+    strcat(classpath, ":");
+  }
+  strcat(classpath, version_dir);
+  strcat(classpath, "/");
+  strcat(classpath, state->versions[index].name);
+  strcat(classpath, ".jar");
+
   return classpath;
 }
 

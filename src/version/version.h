@@ -6,10 +6,14 @@
 
 // 版本信息结构
 typedef struct {
-  char version[32];   // 版本号，如 "1.20.1"
-  char type[16];      // 类型，如 "release", "snapshot"
-  char modloader[32]; // 模组加载器，如 "vanilla", "fabric", "forge"
-  char name[64];      // 自定义名字
+  char version[32];     // 版本号，如 "1.20.1"
+  char type[16];        // 类型，如 "release", "snapshot"
+  char modloader[32];   // 模组加载器，如 "vanilla", "fabric", "forge"
+  char name[64];        // 自定义名字
+  char mainClass[128];  // 主类，如 "net.minecraft.client.main.Main" 或
+                        // "cpw.mods.modlauncher.Launcher"
+  char inheritsFrom[64]; // 继承的父版本名（forge/fabric 常用）
+  int javaMajor;         // 所需的 Java 主版本号，0 表示使用默认
 } VersionInfo;
 
 // 版本页面状态
