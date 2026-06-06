@@ -494,9 +494,10 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   const char *utype_str = "mojang";
   const char *vtype_str = state->versions[idx].type;
 
-  // ---- 内存 ----
+  // ---- 内存（auto 时自动刷新）----
   char mem_arg[80];
-  snprintf(mem_arg, sizeof(mem_arg), "-Xmx%sm", ConfigState->items[1].value);
+  int mem_mb = config_get_memory_mb(ConfigState);
+  snprintf(mem_arg, sizeof(mem_arg), "-Xmx%dm", mem_mb);
 
   // ---- 构建 args ----
   char *args[300];

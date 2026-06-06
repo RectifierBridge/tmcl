@@ -27,5 +27,6 @@ void config_init(ConfigState *state);
 void config_page(int ch, int *middlep, ConfigState *state);
 void config_cleanup(ConfigState *state);
 void config_write(ConfigState *state);
+int config_get_memory_mb(ConfigState *state);
 
 #endif

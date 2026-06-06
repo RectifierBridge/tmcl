@@ -34,5 +34,6 @@ void choose_version(VersionState *state, int index);
 void start_version(VersionState *state, int index);
 void new_version(VersionState *state);
 void delete_version(VersionState *state, int index, ConfigState *ConfigState);
+void begin_version(VersionState *state, ConfigState *ConfigState);
 
 #endif

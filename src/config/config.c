@@ -10,6 +10,7 @@
 void reset_config(ConfigState *state);
 void change_config(ConfigState *state);
 void config_from_json(cJSON *json, ConfigState *state);
+static int detect_memory_mb(void);
 void config_init(ConfigState *state) {
   // 初始化配置项
   char *home_dir = getenv("HOME");
@@ -31,8 +32,8 @@ void config_init(ConfigState *state) {
   char *keys[] = {"java_path",      "memory",          "game_dir",
                   "jvm_args",       "download_cource", "mod_source",
                   "pinned_version", "last_play"};
-  char *default_values[] = {"/usr/bin/java", "2048",       game_dir, "",
-                            "BMCLAPI",       "curseforge", "",       ""};
+  char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
+                            "Official",       "CurseForge", "",       ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -88,6 +89,14 @@ void config_init(ConfigState *state) {
     for (int i = 0; i < state->item_count; i++) {
       strcpy(state->items[i].value, default_values[i]);
     }
+    need_write = 1;
+  }
+
+  // 如果 memory 值为 "auto"，展开为 "auto(实际数值)"
+  if (strcmp(state->items[1].value, "auto") == 0) {
+    int mb = detect_memory_mb();
+    snprintf(state->items[1].value, sizeof(state->items[1].value), "auto(%d)",
+             mb);
     need_write = 1;
   }
 
@@ -206,31 +215,147 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   mvprintw(0, col - 15, "tap [q] to quit");
 }
 
+// 自动检测系统可用内存并返回合适的 Minecraft 内存分配（MB）
+static int detect_memory_mb() {
+  FILE *f = fopen("/proc/meminfo", "r");
+  if (!f) return 2048;
+  char line[256];
+  long mem_kb = 0;
+  while (fgets(line, sizeof(line), f)) {
+    if (sscanf(line, "MemAvailable: %ld", &mem_kb) == 1) break;
+    if (sscanf(line, "MemTotal: %ld", &mem_kb) == 1) {
+      mem_kb = mem_kb * 4 / 5; // 80% of total as fallback
+      break;
+    }
+  }
+  fclose(f);
+  if (mem_kb <= 0) return 2048;
+  int mb = (int)((double)mem_kb / 1024 * 0.70);
+  if (mb < 512) mb = 512;
+  if (mb > 32768) mb = 32768;
+  return mb;
+}
+
+// 从配置值中提取内存大小（MB），若为 auto 则重新检测并更新配置
+int config_get_memory_mb(ConfigState *state) {
+  const char *val = state->items[1].value;
+  if (strncmp(val, "auto", 4) == 0) {
+    int mb = detect_memory_mb();
+    snprintf(state->items[1].value, sizeof(state->items[1].value), "auto(%d)",
+             mb);
+    return mb;
+  }
+  int mb = atoi(val);
+  return mb > 0 ? mb : 2048;
+}
+
 void change_config(ConfigState *state) {
 
   int row, col;
   getmaxyx(stdscr, row, col);
+  int idx = state->selected_item;
 
-  if (state->selected_item < 4) {
-    echo(); // 开启回显
+  if (idx == 1) {
+    // ---- memory 配置：支持 "auto" 和手动输入数字 ----
+    echo();
     curs_set(1);
     clear();
-    mvprintw(3, 2, "Change config: %s", state->items[state->selected_item].key);
-    mvprintw(5, 2, "Current config: %s",
-             state->items[state->selected_item].value);
-    mvprintw(9, 2, "Tap nothing but enter to cancle");
+    mvprintw(3, 2, "Change config: %s", state->items[idx].key);
+    mvprintw(5, 2, "Current config: %s", state->items[idx].value);
+    mvprintw(9, 2, "Enter number or 'auto' (empty to cancel)");
     mvprintw(7, 2, "Enter new config: ");
 
-    char new_config[64];
-    getnstr(new_config, sizeof(new_config) - 1);
-    if ((strcmp(new_config, "")) != 0) {
-      strcpy(state->items[state->selected_item].value, new_config);
+    char input[64];
+    getnstr(input, sizeof(input) - 1);
+    if (strcmp(input, "") != 0) {
+      if (strcmp(input, "auto") == 0) {
+        int mb = detect_memory_mb();
+        snprintf(state->items[idx].value,
+                 sizeof(state->items[idx].value), "auto(%d)", mb);
+      } else {
+        // 验证是否为纯数字
+        char *end;
+        long val = strtol(input, &end, 10);
+        if (*end == '\0' && val > 0) {
+          snprintf(state->items[idx].value,
+                   sizeof(state->items[idx].value), "%ld", val);
+        }
+        // 无效输入 → 不更新，保持原值
+      }
       config_write(state);
     }
-    noecho(); // 关闭回显
+    noecho();
     curs_set(0);
+    clear();
 
-    // 清除重命名界面，主循环会重新绘制完整界面
+  } else if (idx == 4) {
+    // ---- download_source：Official / BMCLAPI 选择器 ----
+    const char *opts[] = {"Official", "BMCLAPI"};
+    int sel = (strcmp(state->items[idx].value, "BMCLAPI") == 0) ? 1 : 0;
+    while (1) {
+      clear();
+      mvprintw(3, 2, "Change config: %s", state->items[idx].key);
+      mvprintw(5, 2, "Current: %s", state->items[idx].value);
+      mvprintw(7, 2, "Select (j/k: switch, Enter: confirm, q: cancel):");
+      for (int i = 0; i < 2; i++) {
+        if (i == sel) attron(A_REVERSE);
+        mvprintw(9 + i, 4, "%s", opts[i]);
+        if (i == sel) attroff(A_REVERSE);
+      }
+      int c = getch();
+      if (c == 'j' || c == 'l') sel = 1;
+      else if (c == 'k' || c == 'h') sel = 0;
+      else if (c == '\n') {
+        strcpy(state->items[idx].value, opts[sel]);
+        config_write(state);
+        break;
+      } else if (c == 'q') break;
+    }
+    clear();
+
+  } else if (idx == 5) {
+    // ---- mod_source：CurseForge / Modrinth 选择器 ----
+    const char *opts[] = {"CurseForge", "Modrinth"};
+    int sel = (strcmp(state->items[idx].value, "Modrinth") == 0) ? 1 : 0;
+    while (1) {
+      clear();
+      mvprintw(3, 2, "Change config: %s", state->items[idx].key);
+      mvprintw(5, 2, "Current: %s", state->items[idx].value);
+      mvprintw(7, 2, "Select (j/k: switch, Enter: confirm, q: cancel):");
+      for (int i = 0; i < 2; i++) {
+        if (i == sel) attron(A_REVERSE);
+        mvprintw(9 + i, 4, "%s", opts[i]);
+        if (i == sel) attroff(A_REVERSE);
+      }
+      int c = getch();
+      if (c == 'j' || c == 'l') sel = 1;
+      else if (c == 'k' || c == 'h') sel = 0;
+      else if (c == '\n') {
+        strcpy(state->items[idx].value, opts[sel]);
+        config_write(state);
+        break;
+      } else if (c == 'q') break;
+    }
+    clear();
+
+  } else if (idx < 4) {
+    // ---- java_path (0), game_dir (2), jvm_args (3)：自由文本输入 ----
+    echo();
+    curs_set(1);
+    clear();
+    mvprintw(3, 2, "Change config: %s", state->items[idx].key);
+    mvprintw(5, 2, "Current config: %s", state->items[idx].value);
+    mvprintw(9, 2, "Tap nothing but enter to cancel");
+    mvprintw(7, 2, "Enter new config: ");
+
+    char input[64];
+    getnstr(input, sizeof(input) - 1);
+    if (strcmp(input, "") != 0) {
+      strcpy(state->items[idx].value, input);
+      config_write(state);
+    }
+    noecho();
+    curs_set(0);
     clear();
   }
 }
@@ -254,6 +379,13 @@ void reset_config(ConfigState *state) {
   case 'y':
     strcpy(state->items[state->selected_item].value,
            state->items[state->selected_item].defaule_value);
+    // 如果重置的是 memory 且默认值为 auto，立即展开
+    if (state->selected_item == 1 &&
+        strcmp(state->items[1].value, "auto") == 0) {
+      int mb = detect_memory_mb();
+      snprintf(state->items[1].value, sizeof(state->items[1].value), "auto(%d)",
+               mb);
+    }
     config_write(state);
     break;
   default:
