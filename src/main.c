@@ -28,7 +28,6 @@ int main() {
   keypad(stdscr, TRUE);
 
   // 初始化所有页面数据
-  home_init(&home_state, &version_state);
   config_init(&config_state);
   account_init(&account_state);
   init_versions(&version_state, &config_state);
@@ -38,6 +37,7 @@ int main() {
     switch (ch) {
     case 'T':
       bigp = 0;
+      home_init(&home_state, &version_state, &config_state);
       break;
     case 'V':
       bigp = 1;
@@ -83,7 +83,7 @@ int main() {
 
     switch (bigp) {
     case 0:
-      home_page(ch, &middlep, &home_state, &version_state);
+      home_page(ch, &middlep, &home_state, &version_state, &config_state);
       title_bar(bigp);
       break;
     case 1:

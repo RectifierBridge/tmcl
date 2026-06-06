@@ -188,6 +188,10 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   int index = state->selected_version;
   if (state->version_count == 0 || index < 0 || index >= state->version_count)
     return;
+
+  strcpy(ConfigState->items[7].value,
+         state->versions[state->selected_version].name);
+
   endwin();
   char *minecraft_dir = ConfigState->items[2].value;
   char version_dir[256]; // .../versions/[version]

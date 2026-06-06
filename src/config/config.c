@@ -14,7 +14,7 @@ void config_init(ConfigState *state) {
   // 初始化配置项
   char *home_dir = getenv("HOME");
   strcpy(state->home_dir, home_dir);
-  state->item_count = 7;
+  state->item_count = 8;
   state->items = malloc(state->item_count * sizeof(ConfigItem));
 
   // 打开tmcl目录
@@ -28,10 +28,11 @@ void config_init(ConfigState *state) {
 
   char game_dir[1024];
   snprintf(game_dir, sizeof(game_dir), "%s/.minecraft", home_dir);
-  char *keys[] = {"java_path",       "memory",     "game_dir",      "jvm_args",
-                  "download_cource", "mod_source", "pinned_version"};
+  char *keys[] = {"java_path",      "memory",          "game_dir",
+                  "jvm_args",       "download_cource", "mod_source",
+                  "pinned_version", "last_play"};
   char *default_values[] = {"/usr/bin/java", "2048",       game_dir, "",
-                            "BMCLAPI",       "curseforge", ""};
+                            "BMCLAPI",       "curseforge", "",       ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -105,7 +106,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   // 处理配置项选择
   switch (ch) {
   case 'j': // 向下选择
-    if (state->selected_item < state->item_count - 1) {
+    if (state->selected_item < state->item_count - 3) {
       state->selected_item++;
       int visible_rows = row - 10;
       if (state->selected_item >= state->scroll_offset + visible_rows) {
