@@ -15,7 +15,7 @@ void config_init(ConfigState *state) {
   // 初始化配置项
   char *home_dir = getenv("HOME");
   strcpy(state->home_dir, home_dir);
-  state->item_count = 8;
+  state->item_count = 9;
   state->items = malloc(state->item_count * sizeof(ConfigItem));
 
   // 打开tmcl目录
@@ -31,9 +31,9 @@ void config_init(ConfigState *state) {
   snprintf(game_dir, sizeof(game_dir), "%s/.minecraft", home_dir);
   char *keys[] = {"java_path",      "memory",          "game_dir",
                   "jvm_args",       "download_cource", "mod_source",
-                  "pinned_version", "last_play"};
+                  "threads",        "pinned_version",  "last_play"};
   char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
-                            "Official",       "CurseForge", "",       ""};
+                            "Official",       "CurseForge", "96",     "", ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -115,7 +115,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   // 处理配置项选择
   switch (ch) {
   case 'j': // 向下选择
-    if (state->selected_item < state->item_count - 3) {
+    if (state->selected_item < state->item_count - 2) {
       state->selected_item++;
       int visible_rows = row - 10;
       if (state->selected_item >= state->scroll_offset + visible_rows) {
@@ -336,6 +336,31 @@ void change_config(ConfigState *state) {
         break;
       } else if (c == 'q') break;
     }
+    clear();
+
+  } else if (idx == 6) {
+    // ---- threads：正整数输入 ----
+    echo();
+    curs_set(1);
+    clear();
+    mvprintw(3, 2, "Change config: %s", state->items[idx].key);
+    mvprintw(5, 2, "Current config: %s", state->items[idx].value);
+    mvprintw(9, 2, "Enter a number ≥1 (empty to cancel)");
+    mvprintw(7, 2, "Enter new config: ");
+
+    char input[64];
+    getnstr(input, sizeof(input) - 1);
+    if (strcmp(input, "") != 0) {
+      char *end;
+      long val = strtol(input, &end, 10);
+      if (*end == '\0' && val >= 1) {
+        snprintf(state->items[idx].value, sizeof(state->items[idx].value),
+                 "%ld", val);
+        config_write(state);
+      }
+    }
+    noecho();
+    curs_set(0);
     clear();
 
   } else if (idx < 4) {

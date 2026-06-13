@@ -1,7 +1,7 @@
 # 定义变量
 CC = gcc
 CFLAGS = -Wall -c -Isrc -Isrc/account -Isrc/config -Isrc/version -Isrc/home
-LIBS = -lncurses -lcjson
+LIBS = -lncurses -lcjson -lpthread
 TARGET = tmcl
 
 # 查找所有源文件（包括子目录）

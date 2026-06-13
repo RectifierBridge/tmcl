@@ -81,6 +81,18 @@ int main() {
       init_versions(&version_state, &config_state);
     }
 
+    // 如果 begin_version / do_install 调用了 endwin()，重启 ncurses
+    if (isendwin()) {
+      initscr();
+      curs_set(0);
+      cbreak();
+      noecho();
+      keypad(stdscr, TRUE);
+      clear();
+      init_versions(&version_state, &config_state);
+      home_init(&home_state, &version_state, &config_state);
+    }
+
     switch (bigp) {
     case 0:
       home_page(ch, &middlep, &home_state, &version_state, &config_state);
