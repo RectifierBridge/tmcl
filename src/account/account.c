@@ -83,6 +83,26 @@ void account_page(int ch, int *middlep, AccountState *state) {
       }
     }
     break;
+  case '\n':
+    switch (*middlep) {
+    case 0:
+      // 选择当前账户
+      if (state->selected_account >= 0 &&
+          state->selected_account < state->account_count) {
+        // 取消之前的选择
+        for (int i = 0; i < state->account_count; i++) {
+          state->accounts[i].selected = 0;
+        }
+        // 选择当前账户
+        state->accounts[state->selected_account].selected = 1;
+      }
+      break;
+    case 1:
+      break;
+    case 2:
+      break;
+    }
+    break;
   }
 
   mvprintw(2, 2, "  Type       Name");
