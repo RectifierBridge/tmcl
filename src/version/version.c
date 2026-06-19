@@ -498,12 +498,22 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   const char *utype_str = (acct && strcmp(acct->type, "microsoft") == 0) ? "msa" : "mojang";
   const char *vtype_str = state->versions[idx].type;
 
+  // ---- 离线皮肤（CustomSkinLoader）----
+  char *skin_arg = NULL;
+  if (acct && strcmp(acct->type, "offline") == 0 && acct->skin_path[0]) {
+    asprintf(&skin_arg, "-Dcustomskinloader.skinPath=%s", acct->skin_path);
+  }
+
   // ---- authlib-injector（LittleSkin / 自定义 Yggdrasil 皮肤）----
   char *injector_arg = NULL;
   if (acct && (strcmp(acct->type, "littleskin") == 0 ||
                strcmp(acct->type, "third_party") == 0)) {
     const char *server = acct->auth_server;
-    if (!server || !server[0]) server = "https://littleskin.cn/api/yggdrasil";
+    if (!server || !server[0])
+      server = "https://littleskin.cn/api/yggdrasil";
+    else if (strcmp(acct->type, "littleskin") == 0 &&
+             strstr(server, "/authserver") != NULL)
+      server = "https://littleskin.cn/api/yggdrasil"; // 修复旧存储
     char injector_path[600];
     // 使用 home_dir 路径
     snprintf(injector_path, sizeof(injector_path), "%s/.tmcl/authlib-injector.jar",
@@ -587,7 +597,11 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
                 asset_index, natives_dir, classpath, uname, uuid_str,
                 token_str, utype_str, vtype_str);
 
-    // authlib-injector（LittleSkin / 自定义 Yggdrasil，必须在 -cp 之前）
+    // authlib-injector / 离线皮肤（必须在 -cp 之前）
+    if (skin_arg && ac < 300 - 4) {
+      args[ac++] = skin_arg;
+      tofree[fc++] = skin_arg;
+    }
     if (injector_arg && ac < 300 - 4) {
       args[ac++] = injector_arg;
       tofree[fc++] = injector_arg;
@@ -621,7 +635,11 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
                                                     "minecraftArguments"));
 
     // 旧版 JVM 参数
-    // authlib-injector（LittleSkin / 自定义 Yggdrasil 皮肤支持）
+    // 离线皮肤 / authlib-injector
+    if (skin_arg && ac < 300 - 4) {
+      args[ac++] = skin_arg;
+      tofree[fc++] = skin_arg;
+    }
     if (injector_arg && ac < 300 - 4) {
       args[ac++] = injector_arg;
       tofree[fc++] = injector_arg;
@@ -867,8 +885,8 @@ void version_page(int ch, int *middlep, VersionState *state,
   }
 
   // 显示版本列表标题
-  mvprintw(2, 4, "Type    Modloader Version   Name");
-  mvprintw(3, 4, "----    --------- -------   ----");
+  mvprintw(2, 3, "Type    Modloader Version   Name");
+  mvprintw(3, 3, "----    --------- -------   ----");
 
   // 显示版本列表
   int start_y = 4;                     // 列表开始的行
@@ -879,7 +897,7 @@ void version_page(int ch, int *middlep, VersionState *state,
        i++) {
 
     // 移动到正确的位置
-    move(start_y + i - state->scroll_offset, 2);
+    move(start_y + i - state->scroll_offset, 1);
 
     // 如果是选中的版本，高亮显示
     if (i == state->selected_version) {

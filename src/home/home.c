@@ -35,6 +35,7 @@ void home_page(int ch, int *middlep, HomeState *state,
 
   int row, col;
   getmaxyx(stdscr, row, col);
+  int cur_row, cur_col;
 
   // print hellow
   printw("\n\n  Welcome to:\n\n");
@@ -43,12 +44,12 @@ void home_page(int ch, int *middlep, HomeState *state,
   printw("    ##     ## #### ##  ##       ##    \n");
   printw("    ##     ##  ##  ##  ##       ##    \n");
   printw("    ##     ##      ##  #######  ######\n\n");
-  printw("  Terminal Minecraft Launcher,\n");
-  printw("  A Minecraft launcher based on TUI.\n");
-  printw("  TMCL is free open-source software.\n\n");
-  // 底部信息
-  printw("  Buy us a coffee.\n");
-  printw("  Developer: fossrina.");
+  printw("  Terminal Minecraft Launcher is a high-speed, lightweight TUI-based launcher for Minecraft: Java Edition. Primarily developed for GNU/Linux operating systems, it is free and open-source software licensed under the GNU GPL v3.0. You can navigate and operate it with Vim-style keybindings. This program is built by alephteam, a young team composed entirely of teenage developers, with aleph0 serving as its lead author.\n");
+  printw("  You can quick start easily in this TMCL home page.\n");
+  printw("  Buy us a coffee.It is very important to us.Even 1$ counts.\n");
+  getyx(stdscr, cur_row, cur_col);
+  mvprintw(cur_row , col - 25, "Main Developer: aleph0\n");
+  mvprintw(cur_row + 1, col - 25, "Our Team: alephteam");
 
   // key
   switch (ch) {
@@ -77,31 +78,31 @@ void home_page(int ch, int *middlep, HomeState *state,
   }
 
   // two game versions to display
-  move(19, 4);
+  move(cur_row + 3, 4);
   printw("Pinned Version:\n");
   if (state->selected == 0) {
     attron(A_REVERSE);
   }
   if (VersionState->version_count == 0) {
-    mvprintw(20, 4,"No version installed.");
+    mvprintw(cur_row + 4, 4,"No version installed.");
   } else if (state->pinned_index < 0) {
-    mvprintw(20, 4, "No pinned version.");
+    mvprintw(cur_row + 4, 4, "No pinned version.");
   } else {
-    mvprintw(20, 4, "%s", VersionState->versions[state->pinned_index].name);
+    mvprintw(cur_row + 4, 4, "%s", VersionState->versions[state->pinned_index].name);
   }
   if (state->selected == 0) {
     attroff(A_REVERSE);
   }
 
-  move(22, 4);
+  move(cur_row + 6, 4);
   printw("Last Play:\n");
   if (state->selected == 1) {
     attron(A_REVERSE);
   }
   if (state->last_index >= 0) {
-    mvprintw(23, 4, "%s", VersionState->versions[state->last_index].name);
+    mvprintw(cur_row + 7, 4, "%s", VersionState->versions[state->last_index].name);
   } else {
-    mvprintw(23, 4, "not play yet.");
+    mvprintw(cur_row + 7, 4, "not play yet.");
   }
   if (state->selected == 1) {
     attroff(A_REVERSE);

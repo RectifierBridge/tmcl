@@ -300,7 +300,8 @@ static int ms_profile(const char *mc_token, char *uuid_out, size_t uuid_sz,
 static void ms_cleanup() { free(g_dev_code); g_dev_code = NULL; }
 
 // ======================== LittleSkin / Yggdrasil 登录 ========================
-#define LITTLESKIN_AUTH "https://littleskin.cn/api/yggdrasil/authserver/authenticate"
+#define LITTLESKIN_ROOT "https://littleskin.cn/api/yggdrasil"
+#define LITTLESKIN_AUTH LITTLESKIN_ROOT "/authserver/authenticate"
 
 // 执行 Yggdrasil 认证，返回 JSON 响应（调用者 cJSON_Delete）
 static cJSON *ygg_auth(const char *server, const char *email,
@@ -660,7 +661,7 @@ static void new_account_popup(AccountState *state) {
     strncpy(a->uuid, ls_uuid, sizeof(a->uuid) - 1);
     strncpy(a->type, type_keys[sel], sizeof(a->type) - 1);
     strncpy(a->access_token, ls_token, sizeof(a->access_token) - 1);
-    strncpy(a->auth_server, LITTLESKIN_AUTH, sizeof(a->auth_server) - 1);
+    strncpy(a->auth_server, LITTLESKIN_ROOT, sizeof(a->auth_server) - 1);
     a->selected = 0;
     if (state->account_count == 1) {
       a->selected = 1;
@@ -672,12 +673,63 @@ static void new_account_popup(AccountState *state) {
   }
 
   if (sel == 3) {
-    // Custom Yggdrasil — Coming Soon
+    // ---- Custom Yggdrasil 登录 ----
+    echo();
+    curs_set(1);
     clear();
-    mvprintw(5, 4, "Custom Yggdrasil");
-    mvprintw(7, 4, "Coming soon!");
-    mvprintw(9, 4, "Press any key to return...");
-    getch();
+    mvprintw(3, 4, "Custom Yggdrasil Login");
+    mvprintw(5, 4, "Enter Yggdrasil API root URL:");
+    mvprintw(6, 4, "(e.g. https://example.com/api/yggdrasil)");
+    mvprintw(8, 4, "> ");
+    char server_url[256] = {0};
+    getnstr(server_url, sizeof(server_url) - 1);
+
+    mvprintw(10, 4, "Enter email:");
+    mvprintw(12, 4, "> ");
+    char email[64] = {0};
+    getnstr(email, sizeof(email) - 1);
+
+    mvprintw(14, 4, "Enter password:");
+    mvprintw(16, 4, "> ");
+    noecho();
+    char password[64] = {0};
+    getnstr(password, sizeof(password) - 1);
+    echo();
+    noecho();
+    curs_set(0);
+    clear();
+
+    if (server_url[0] == '\0' || email[0] == '\0' || password[0] == '\0')
+      return;
+
+    char yu_uuid[64] = {0}, yu_name[32] = {0}, yu_token[512] = {0};
+    if (!ygg_login(server_url, email, password,
+                   yu_uuid, sizeof(yu_uuid),
+                   yu_name, sizeof(yu_name),
+                   yu_token, sizeof(yu_token))) {
+      clear();
+      mvprintw(5, 4, "Login failed. Check URL/email/password.");
+      mvprintw(7, 4, "Press any key to return...");
+      getch(); clear(); return;
+    }
+
+    // 创建账户
+    state->account_count++;
+    state->accounts = realloc(state->accounts,
+                              state->account_count * sizeof(AccountInfo));
+    AccountInfo *a = &state->accounts[state->account_count - 1];
+    memset(a, 0, sizeof(*a));
+    strncpy(a->username, yu_name, sizeof(a->username) - 1);
+    strncpy(a->uuid, yu_uuid, sizeof(a->uuid) - 1);
+    strncpy(a->type, type_keys[sel], sizeof(a->type) - 1);
+    strncpy(a->access_token, yu_token, sizeof(a->access_token) - 1);
+    strncpy(a->auth_server, server_url, sizeof(a->auth_server) - 1);
+    a->selected = 0;
+    if (state->account_count == 1) {
+      a->selected = 1;
+      state->selected_account = 0;
+    }
+    account_write(state);
     clear();
     return;
   }
@@ -790,6 +842,30 @@ static void delete_account_popup(AccountState *state, int index) {
   clear();
 }
 
+// ======================== 皮肤设置弹窗 ========================
+static void set_skin_popup(AccountInfo *a) {
+  echo();
+  curs_set(1);
+  clear();
+  mvprintw(3, 4, "Set offline skin");
+  mvprintw(5, 4, "Current: %s",
+           a->skin_path[0] ? a->skin_path : "(none)");
+  mvprintw(7, 4, "Enter path to PNG skin file (64x64):");
+  mvprintw(9, 4, "Requires CustomSkinLoader mod to work.");
+  mvprintw(10, 4, "(empty to clear / keep current)");
+  mvprintw(12, 4, "> ");
+
+  char input[256] = {0};
+  getnstr(input, sizeof(input) - 1);
+  if (input[0] != '\0') {
+    strncpy(a->skin_path, input, sizeof(a->skin_path) - 1);
+    a->skin_path[sizeof(a->skin_path) - 1] = '\0';
+  }
+  noecho();
+  curs_set(0);
+  clear();
+}
+
 // ======================== 账户页面 ========================
 void account_page(int ch, int *middlep, AccountState *state) {
   clear();
@@ -813,7 +889,7 @@ void account_page(int ch, int *middlep, AccountState *state) {
         state->scroll_offset--;
     }
     break;
-  case 's': // select — 直接执行并将光标移到 select
+  case 'c': // choose
     if (state->selected_account >= 0 &&
         state->selected_account < state->account_count) {
       for (int i = 0; i < state->account_count; i++)
@@ -823,21 +899,30 @@ void account_page(int ch, int *middlep, AccountState *state) {
     }
     *middlep = 0;
     break;
-  case 'n': // new — 直接执行并将光标移到 new
+  case 'n': // new
     new_account_popup(state);
     *middlep = 1;
     break;
-  case 'd': // delete — 直接执行并将光标移到 delete
+  case 'd': // delete
     delete_account_popup(state, state->selected_account);
     *middlep = 2;
     break;
+  case 's': // skin（仅离线账户有效）
+    if (state->selected_account >= 0 &&
+        state->selected_account < state->account_count &&
+        strcmp(state->accounts[state->selected_account].type, "offline") == 0) {
+      set_skin_popup(&state->accounts[state->selected_account]);
+      account_write(state);
+    }
+    *middlep = 3;
+    break;
   case 'h':
-    *middlep = (*middlep + 2) % 3;
+    *middlep = (*middlep + 3) % 4;
     break;
   case 'l':
-    *middlep = (*middlep + 1) % 3;
+    *middlep = (*middlep + 1) % 4;
     break;
-  case '\n': // Enter — 执行当前光标所在操作
+  case '\n':
     switch (*middlep) {
     case 0:
       if (state->selected_account >= 0 &&
@@ -853,6 +938,14 @@ void account_page(int ch, int *middlep, AccountState *state) {
       break;
     case 2:
       delete_account_popup(state, state->selected_account);
+      break;
+    case 3:
+      if (state->selected_account >= 0 &&
+          state->selected_account < state->account_count &&
+          strcmp(state->accounts[state->selected_account].type, "offline") == 0) {
+        set_skin_popup(&state->accounts[state->selected_account]);
+        account_write(state);
+      }
       break;
     }
     break;
@@ -873,15 +966,15 @@ void account_page(int ch, int *middlep, AccountState *state) {
   }
 
   // 账户列表
-  mvprintw(2, 2, "  Type       Name");
-  mvprintw(3, 2, "  ----       ----");
+  mvprintw(2, 2, " Type       Name");
+  mvprintw(3, 2, " ----       ----");
   int start_y = 4;
   int max_display = row - start_y - 3;
 
   for (int i = state->scroll_offset;
        i < state->account_count && i < state->scroll_offset + max_display;
        i++) {
-    move(start_y + i - state->scroll_offset, 2);
+    move(start_y + i - state->scroll_offset, 1);
     if (i == state->selected_account) attron(A_REVERSE);
 
     char star[4];
@@ -901,17 +994,22 @@ bottom:
   // 底部操作栏
   switch (*middlep) {
   case 0:
-    attron(A_REVERSE); mvprintw(row - 1, 0, "[s]elect"); attroff(A_REVERSE);
-    printw(" [n]ew [d]elete");
+    attron(A_REVERSE); mvprintw(row - 1, 0, "[c]hoose"); attroff(A_REVERSE);
+    printw(" [n]ew [d]elete [s]kin");
     break;
   case 1:
-    mvprintw(row - 1, 0, "[s]elect ");
+    mvprintw(row - 1, 0, "[c]hoose ");
     attron(A_REVERSE); printw("[n]ew"); attroff(A_REVERSE);
-    printw(" [d]elete");
+    printw(" [d]elete [s]kin");
     break;
   case 2:
-    mvprintw(row - 1, 0, "[s]elect [n]ew ");
+    mvprintw(row - 1, 0, "[c]hoose [n]ew ");
     attron(A_REVERSE); printw("[d]elete"); attroff(A_REVERSE);
+    printw(" [s]kin");
+    break;
+  case 3:
+    mvprintw(row - 1, 0, "[c]hoose [n]ew [d]elete ");
+    attron(A_REVERSE); printw("[s]kin"); attroff(A_REVERSE);
     break;
   }
 }

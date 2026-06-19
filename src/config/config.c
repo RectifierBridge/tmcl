@@ -159,8 +159,8 @@ void config_page(int ch, int *middlep, ConfigState *state) {
     }
   }
 
-  mvprintw(2, 2, "Key              Value");
-  mvprintw(3, 2, "---              -----");
+  mvprintw(2, 3, "Key              Value");
+  mvprintw(3, 3, "---              -----");
   // 显示配置项列表（最后两项 pinned_version / last_play 由系统管理，不展示）
   int start_y = 4;
   int display_items = state->item_count - 2;
@@ -175,7 +175,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
       attron(A_REVERSE);
     }
 
-    printw("%-15s: %-20s", state->items[i].key, state->items[i].value);
+    printw(" %-15s  %-20s", state->items[i].key, state->items[i].value);
 
     if (i == state->selected_item) {
       attroff(A_REVERSE);
