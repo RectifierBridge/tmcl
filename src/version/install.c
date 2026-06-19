@@ -364,24 +364,26 @@ static int dl_one(const char *url, const char *dest, const char *label) {
     _exit(1);
   }
 
-  // 父进程：等待 curl。EINTR 表示收到 Ctrl+C
-  int status;
-  while (waitpid(pid, &status, 0) < 0) {
-    if (errno == EINTR) {
-      if (g_cancel) {
-        kill(pid, SIGTERM);
-        waitpid(pid, &status, 0);
-        break;
-      }
-      continue;
+  // 父进程：轮询 waitpid，每 100ms 检查 g_cancel
+  int status, done = 0;
+  while (!done) {
+    if (g_cancel) {
+      kill(pid, SIGKILL);
+      waitpid(pid, &status, 0);
+      printf("  \033[33mSKIP\033[0m %s\n", label);
+      return 1;
     }
-    break;
+    pid_t r = waitpid(pid, &status, WNOHANG);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (r > 0) { done = 1; break; }
+    usleep(100000); // 100ms
   }
 
-  if (g_cancel) {
-    printf("  \033[33mSKIP\033[0m %s\n", label);
-    return 1;
-  }
+  if (!done) { printf("  \033[31mWAIT\033[0m %s\n", label); return 1; }
+
   if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
     printf("  \033[32mOK\033[0m  %s\n", label);
     return 0;

@@ -29,7 +29,7 @@ int main() {
 
   // 初始化所有页面数据
   config_init(&config_state);
-  account_init(&account_state);
+  account_init(&account_state, &config_state);
   init_versions(&version_state, &config_state);
 
   while (1) {

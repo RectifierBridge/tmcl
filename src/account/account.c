@@ -1,63 +1,834 @@
+// account.c — 账户管理
 #include "account.h"
+#include <cjson/cJSON.h>
 #include <ncurses.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-void account_init(AccountState *state) {
-  // 初始化账户数据
-  state->account_count = 2;
-  state->accounts = malloc(state->account_count * sizeof(AccountInfo));
+// Microsoft OAuth2 客户端 ID（device_code 流程用）
+#define MS_CLIENT_ID "00000000402b5328"
 
-  if (state->accounts != NULL) {
-    // 离线账户 1
-    strcpy(state->accounts[0].username, "Player1");
-    strcpy(state->accounts[0].uuid, "off user 1");
-    strcpy(state->accounts[0].type, "offline");
-    state->accounts[0].selected = 1;
-
-    // 离线账户 2
-    strcpy(state->accounts[1].username, "Steve");
-    strcpy(state->accounts[1].uuid, "off user 2");
-    strcpy(state->accounts[1].type, "offline");
-    state->accounts[1].selected = 0;
+// ======================== curl 辅助 ========================
+// 执行 curl POST/GET，返回响应体（动态分配，调用者 free）
+// content_type: "application/json" 或 "application/x-www-form-urlencoded"
+static char *curl_fetch(const char *url, const char *post_data,
+                        const char *auth_header, const char *content_type) {
+  char cmd[8192];
+  int off;
+  if (post_data) {
+    off = snprintf(cmd, sizeof(cmd),
+                   "curl -s -L -H 'Content-Type: %s' %s--data-raw '%s' '%s'",
+                   content_type,
+                   auth_header ? "-H '" : "",
+                   post_data, url);
+    // Insert auth header if present (after -H)
+    if (auth_header) {
+      // Rebuild: put auth header between Content-Type and --data-raw
+      off = snprintf(cmd, sizeof(cmd),
+                     "curl -s -L -H 'Content-Type: %s' -H '%s' "
+                     "--data-raw '%s' '%s'",
+                     content_type, auth_header, post_data, url);
+    }
+  } else {
+    if (auth_header) {
+      off = snprintf(cmd, sizeof(cmd),
+                     "curl -s -L -H 'Content-Type: %s' -H '%s' '%s'",
+                     content_type, auth_header, url);
+    } else {
+      off = snprintf(cmd, sizeof(cmd),
+                     "curl -s -L -H 'Content-Type: %s' '%s'",
+                     content_type, url);
+    }
   }
+  if (off < 0 || off >= (int)sizeof(cmd)) return NULL;
 
-  state->selected_account = 0;
-  state->scroll_offset = 0;
+  FILE *p = popen(cmd, "r");
+  if (!p) return NULL;
+
+  char *buf = NULL;
+  size_t cap = 0, len = 0;
+  char chunk[4096];
+  while (fgets(chunk, sizeof(chunk), p)) {
+    size_t cl = strlen(chunk);
+    if (len + cl + 1 > cap) {
+      cap = cap ? cap * 2 : 4096;
+      buf = realloc(buf, cap);
+    }
+    memcpy(buf + len, chunk, cl);
+    len += cl;
+    buf[len] = '\0';
+  }
+  pclose(p);
+  return buf;
 }
 
+// ======================== 离线 UUID 生成 (UUID v3) ========================
+// 使用系统 md5sum 计算标准 Minecraft 离线 UUID：
+// UUID.nameUUIDFromBytes(("OfflinePlayer:" + username).getBytes("UTF-8"))
+static void offline_uuid(const char *username, char *out, size_t size) {
+  char cmd[320];
+  snprintf(cmd, sizeof(cmd), "echo -n 'OfflinePlayer:%s' | md5sum", username);
+  FILE *p = popen(cmd, "r");
+  if (!p) { snprintf(out, size, "00000000-0000-0000-0000-000000000000"); return; }
+  char hash[33] = {0};
+  fgets(hash, sizeof(hash), p);
+  pclose(p);
+
+  // md5sum 输出 32 字符 MD5 hex + 空格
+  if (strlen(hash) < 32) {
+    snprintf(out, size, "00000000-0000-0000-0000-000000000000");
+    return;
+  }
+
+  // 解析为 16 字节，设置 UUID v3 version + variant bits
+  unsigned char h[16];
+  for (int i = 0; i < 16; i++) {
+    unsigned int b;
+    sscanf(hash + i * 2, "%02x", &b);
+    h[i] = (unsigned char)b;
+  }
+  h[6] = (h[6] & 0x0f) | 0x30; // version 3
+  h[8] = (h[8] & 0x3f) | 0x80; // variant
+
+  snprintf(out, size,
+           "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+           h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7],
+           h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15]);
+}
+
+// ======================== Microsoft 登录 ========================
+
+// Step 1: 请求 device_code。返回时 device_code / interval 存到全局临时变量
+static char *g_dev_code = NULL;
+static int g_dev_interval = 5;
+
+static int ms_device_code(char **user_code_out, char **msg_out,
+                          const char *client_id) {
+  if (!client_id || !client_id[0]) {
+    *msg_out = strdup("Azure client ID is not configured.\n"
+                      "Set ms_client_id in Config page.");
+    return 0;
+  }
+  char post[512];
+  snprintf(post, sizeof(post),
+           "client_id=%s&scope=XboxLive.signin%%20offline_access", client_id);
+  char *resp = curl_fetch(
+      "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
+      post, NULL, "application/x-www-form-urlencoded");
+  if (!resp) return 0;
+  cJSON *j = cJSON_Parse(resp); free(resp);
+  if (!j) return 0;
+
+  cJSON *err = cJSON_GetObjectItem(j, "error");
+  if (err && cJSON_IsString(err)) {
+    cJSON *desc = cJSON_GetObjectItem(j, "error_description");
+    *msg_out = strdup(desc && cJSON_IsString(desc)
+                      ? desc->valuestring
+                      : err->valuestring);
+    cJSON_Delete(j);
+    return 0;
+  }
+
+  cJSON *uc = cJSON_GetObjectItem(j, "user_code");
+  cJSON *msg = cJSON_GetObjectItem(j, "message");
+  cJSON *dc = cJSON_GetObjectItem(j, "device_code");
+  cJSON *iv = cJSON_GetObjectItem(j, "interval");
+  int ok = 0;
+  if (uc && dc && cJSON_IsString(uc) && cJSON_IsString(dc)) {
+    *user_code_out = strdup(uc->valuestring);
+    *msg_out = msg && cJSON_IsString(msg) ? strdup(msg->valuestring)
+                : strdup("Open URL and enter the code");
+    free(g_dev_code);
+    g_dev_code = strdup(dc->valuestring);
+    g_dev_interval = (iv && cJSON_IsNumber(iv)) ? iv->valueint : 5;
+    ok = 1;
+  }
+  cJSON_Delete(j);
+  return ok;
+}
+
+// Step 2: 轮询 token，返回 access_token + refresh_token 的 JSON 字符串
+static char *ms_poll_token(const char *client_id) {
+  if (!g_dev_code) return NULL;
+  char post[512];
+  snprintf(post, sizeof(post),
+           "grant_type=urn%%3Aietf%%3Aparams%%3Aoauth%%3A"
+           "grant-type%%3Adevice_code&device_code=%s&client_id=%s",
+           g_dev_code, client_id);
+
+  for (int i = 0; i < 40; i++) {
+    sleep(g_dev_interval);
+    char *resp = curl_fetch(
+        "https://login.microsoftonline.com/consumers/oauth2/v2.0/token", post,
+        NULL, "application/x-www-form-urlencoded");
+    if (!resp) continue;
+    cJSON *j = cJSON_Parse(resp); free(resp);
+    if (!j) continue;
+
+    cJSON *at = cJSON_GetObjectItem(j, "access_token");
+    cJSON *rt = cJSON_GetObjectItem(j, "refresh_token");
+    cJSON *err = cJSON_GetObjectItem(j, "error");
+
+    if (at) {
+      cJSON *save = cJSON_CreateObject();
+      cJSON_AddStringToObject(save, "access_token", at->valuestring);
+      if (rt) cJSON_AddStringToObject(save, "refresh_token", rt->valuestring);
+      char *result = cJSON_PrintUnformatted(save);
+      cJSON_Delete(save);
+      cJSON_Delete(j);
+      return result; // 调用者 cJSON_free
+    }
+    if (err && strcmp(err->valuestring, "authorization_pending") != 0) {
+      cJSON_Delete(j); return NULL;
+    }
+    cJSON_Delete(j);
+  }
+  return NULL;
+}
+
+// 从保存的 JSON 中提取字段
+static char *js_get_str(cJSON *j, const char *key) {
+  cJSON *v = cJSON_GetObjectItem(j, key);
+  return (v && cJSON_IsString(v)) ? strdup(v->valuestring) : NULL;
+}
+
+// Step 3: Xbox Live 认证
+static char *ms_xbox_auth(const char *ms_token) {
+  char *post = NULL;
+  asprintf(&post,
+           "{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\","
+           "\"RpsTicket\":\"d=%s\"},\"RelyingParty\":\"http://auth.xboxlive.com\","
+           "\"TokenType\":\"JWT\"}", ms_token);
+  if (!post) return NULL;
+  char *resp = curl_fetch("https://user.auth.xboxlive.com/user/authenticate",
+                          post, NULL, "application/json");
+  free(post);
+  if (!resp) return NULL;
+  cJSON *j = cJSON_Parse(resp); free(resp);
+  if (!j) return NULL;
+  char *token = js_get_str(j, "Token");
+  cJSON_Delete(j);
+  return token;
+}
+
+// Step 4: XSTS 认证 → 返回 {token, uhs} JSON
+static char *ms_xsts_auth(const char *xbox_token) {
+  char *post = NULL;
+  asprintf(&post,
+           "{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\"%s\"]},"
+           "\"RelyingParty\":\"rp://api.minecraftservices.com/\","
+           "\"TokenType\":\"JWT\"}", xbox_token);
+  if (!post) return NULL;
+  char *resp = curl_fetch("https://xsts.auth.xboxlive.com/xsts/authorize",
+                          post, NULL, "application/json");
+  free(post);
+  if (!resp) return NULL;
+  cJSON *j = cJSON_Parse(resp); free(resp);
+  if (!j) return NULL;
+  cJSON *token = cJSON_GetObjectItem(j, "Token");
+  cJSON *dc = cJSON_GetObjectItem(j, "DisplayClaims");
+  char *result = NULL;
+  if (token && dc) {
+    cJSON *xui_arr = cJSON_GetObjectItem(dc, "xui");
+    cJSON *xui0 = cJSON_GetArrayItem(xui_arr, 0);
+    cJSON *uhs = xui0 ? cJSON_GetObjectItem(xui0, "uhs") : NULL;
+    if (uhs && cJSON_IsString(uhs)) {
+      cJSON *save = cJSON_CreateObject();
+      cJSON_AddStringToObject(save, "token", token->valuestring);
+      cJSON_AddStringToObject(save, "uhs", uhs->valuestring);
+      result = cJSON_PrintUnformatted(save);
+      cJSON_Delete(save);
+    }
+  }
+  cJSON_Delete(j);
+  return result;
+}
+
+// Step 5: XSTS → Minecraft token
+static char *ms_mc_login(const char *xsts_json) {
+  cJSON *xj = cJSON_Parse(xsts_json);
+  if (!xj) return NULL;
+  char *xsts = js_get_str(xj, "token");
+  char *uhs = js_get_str(xj, "uhs");
+  cJSON_Delete(xj);
+  if (!xsts || !uhs) { free(xsts); free(uhs); return NULL; }
+
+  char *post = NULL;
+  asprintf(&post, "{\"identityToken\":\"XBL3.0 x=%s;%s\"}", uhs, xsts);
+  free(xsts); free(uhs);
+  if (!post) return NULL;
+
+  char *resp = curl_fetch(
+      "https://api.minecraftservices.com/authentication/login_with_xbox", post,
+      NULL, "application/json");
+  free(post);
+  if (!resp) return NULL;
+  cJSON *j = cJSON_Parse(resp); free(resp);
+  if (!j) return NULL;
+  char *token = js_get_str(j, "access_token");
+  cJSON_Delete(j);
+  return token;
+}
+
+// Step 6: 获取 Minecraft Profile
+static int ms_profile(const char *mc_token, char *uuid_out, size_t uuid_sz,
+                      char *name_out, size_t name_sz) {
+  char *ah = NULL;
+  asprintf(&ah, "Authorization: Bearer %s", mc_token);
+  if (!ah) return 0;
+  char *resp = curl_fetch("https://api.minecraftservices.com/minecraft/profile",
+                          NULL, ah, "application/json");
+  free(ah);
+  if (!resp) return 0;
+  cJSON *j = cJSON_Parse(resp); free(resp);
+  if (!j) return 0;
+  cJSON *id = cJSON_GetObjectItem(j, "id");
+  cJSON *name = cJSON_GetObjectItem(j, "name");
+  int ok = 0;
+  if (id && name && cJSON_IsString(id) && cJSON_IsString(name)) {
+    strncpy(uuid_out, id->valuestring, uuid_sz - 1); uuid_out[uuid_sz-1]='\0';
+    strncpy(name_out, name->valuestring, name_sz - 1); name_out[name_sz-1]='\0';
+    ok = 1;
+  }
+  cJSON_Delete(j);
+  return ok;
+}
+
+static void ms_cleanup() { free(g_dev_code); g_dev_code = NULL; }
+
+// ======================== LittleSkin / Yggdrasil 登录 ========================
+#define LITTLESKIN_AUTH "https://littleskin.cn/api/yggdrasil/authserver/authenticate"
+
+// 执行 Yggdrasil 认证，返回 JSON 响应（调用者 cJSON_Delete）
+static cJSON *ygg_auth(const char *server, const char *email,
+                        const char *password) {
+  char *post = NULL;
+  asprintf(&post,
+           "{\"agent\":{\"name\":\"Minecraft\",\"version\":1},"
+           "\"username\":\"%s\",\"password\":\"%s\"}", email, password);
+  if (!post) return NULL;
+  char *resp = curl_fetch(server, post, NULL, "application/json");
+  free(post);
+  if (!resp) return NULL;
+  cJSON *j = cJSON_Parse(resp);
+  free(resp);
+  return j;
+}
+
+// LittleSkin / Yggdrasil 登录流程：返回 access_token + 选中的 profile
+// 如果有多个 profile，让用户选择；单个则自动选择
+static int ygg_login(const char *server, const char *email, const char *password,
+                     char *uuid_out, size_t uuid_sz,
+                     char *name_out, size_t name_sz,
+                     char *token_out, size_t token_sz) {
+  cJSON *j = ygg_auth(server, email, password);
+  if (!j) return 0;
+
+  cJSON *err = cJSON_GetObjectItem(j, "error");
+  if (err) {
+    cJSON_Delete(j);
+    return 0; // 认证失败
+  }
+
+  cJSON *at = cJSON_GetObjectItem(j, "accessToken");
+  cJSON *sp = cJSON_GetObjectItem(j, "selectedProfile");
+  cJSON *ap = cJSON_GetObjectItem(j, "availableProfiles");
+
+  if (!at || !cJSON_IsString(at)) { cJSON_Delete(j); return 0; }
+
+  // 单个 profile 自动选择；多个则弹出选择器
+  int count = ap ? cJSON_GetArraySize(ap) : 0;
+  const char *uuid = NULL, *name = NULL;
+
+  if (count == 0) {
+    cJSON_Delete(j);
+    return 0;
+  } else if (count == 1) {
+    cJSON *p = cJSON_GetArrayItem(ap, 0);
+    cJSON *pid = cJSON_GetObjectItem(p, "id");
+    cJSON *pname = cJSON_GetObjectItem(p, "name");
+    uuid = pid && cJSON_IsString(pid) ? pid->valuestring : NULL;
+    name = pname && cJSON_IsString(pname) ? pname->valuestring : NULL;
+  } else {
+    // 多 profile 选择器
+    clear();
+    mvprintw(3, 4, "Select a character:");
+    int sel = 0;
+    while (1) {
+      int row, col;
+      getmaxyx(stdscr, row, col);
+      for (int i = 0; i < count; i++) {
+        cJSON *p = cJSON_GetArrayItem(ap, i);
+        cJSON *pn = cJSON_GetObjectItem(p, "name");
+        if (i == sel) attron(A_REVERSE);
+        mvprintw(5 + i, 6, "%s", pn && cJSON_IsString(pn) ? pn->valuestring : "?");
+        if (i == sel) attroff(A_REVERSE);
+      }
+      mvprintw(7 + count, 4, "j/k: move  Enter: confirm");
+      int c = getch();
+      if (c == 'j' && sel < count - 1) sel++;
+      if (c == 'k' && sel > 0) sel--;
+      if (c == '\n') break;
+    }
+    cJSON *p = cJSON_GetArrayItem(ap, sel);
+    cJSON *pid = cJSON_GetObjectItem(p, "id");
+    cJSON *pname = cJSON_GetObjectItem(p, "name");
+    uuid = pid && cJSON_IsString(pid) ? pid->valuestring : NULL;
+    name = pname && cJSON_IsString(pname) ? pname->valuestring : NULL;
+    clear();
+  }
+
+  if (!uuid || !name) { cJSON_Delete(j); return 0; }
+
+  strncpy(uuid_out, uuid, uuid_sz - 1); uuid_out[uuid_sz - 1] = '\0';
+  strncpy(name_out, name, name_sz - 1); name_out[name_sz - 1] = '\0';
+  strncpy(token_out, at->valuestring, token_sz - 1); token_out[token_sz - 1] = '\0';
+  cJSON_Delete(j);
+  return 1;
+}
+
+// ======================== 账户管理 ========================
+
+AccountState *g_account_state = NULL;
+
+void account_init(AccountState *state, ConfigState *cstate) {
+  g_account_state = state;
+  snprintf(state->accounts_file, sizeof(state->accounts_file),
+           "%s/.tmcl/accounts.json", cstate->home_dir);
+  state->account_count = 0;
+  state->accounts = NULL;
+  state->selected_account = 0;
+  state->scroll_offset = 0;
+
+  FILE *f = fopen(state->accounts_file, "r");
+  if (!f) return; // 没有账户文件 → 空列表
+
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  char *data = malloc(sz + 1);
+  if (!data) { fclose(f); return; }
+  fread(data, 1, sz, f);
+  data[sz] = '\0';
+  fclose(f);
+
+  cJSON *arr = cJSON_Parse(data);
+  free(data);
+  if (!arr || !cJSON_IsArray(arr)) { cJSON_Delete(arr); return; }
+
+  int count = cJSON_GetArraySize(arr);
+  if (count == 0) { cJSON_Delete(arr); return; }
+
+  state->accounts = malloc(count * sizeof(AccountInfo));
+  if (!state->accounts) { cJSON_Delete(arr); return; }
+
+  for (int i = 0; i < count; i++) {
+    cJSON *obj = cJSON_GetArrayItem(arr, i);
+    AccountInfo *a = &state->accounts[i];
+    memset(a, 0, sizeof(*a));
+
+    cJSON *j;
+    j = cJSON_GetObjectItem(obj, "username"); if (j && cJSON_IsString(j))
+      strncpy(a->username, j->valuestring, sizeof(a->username)-1);
+    j = cJSON_GetObjectItem(obj, "uuid"); if (j && cJSON_IsString(j))
+      strncpy(a->uuid, j->valuestring, sizeof(a->uuid)-1);
+    j = cJSON_GetObjectItem(obj, "type"); if (j && cJSON_IsString(j))
+      strncpy(a->type, j->valuestring, sizeof(a->type)-1);
+    j = cJSON_GetObjectItem(obj, "access_token"); if (j && cJSON_IsString(j))
+      strncpy(a->access_token, j->valuestring, sizeof(a->access_token)-1);
+    j = cJSON_GetObjectItem(obj, "refresh_token"); if (j && cJSON_IsString(j))
+      strncpy(a->refresh_token, j->valuestring, sizeof(a->refresh_token)-1);
+    j = cJSON_GetObjectItem(obj, "auth_server"); if (j && cJSON_IsString(j))
+      strncpy(a->auth_server, j->valuestring, sizeof(a->auth_server)-1);
+    j = cJSON_GetObjectItem(obj, "skin_path"); if (j && cJSON_IsString(j))
+      strncpy(a->skin_path, j->valuestring, sizeof(a->skin_path)-1);
+    j = cJSON_GetObjectItem(obj, "selected"); a->selected = (j && cJSON_IsTrue(j));
+    if (a->selected) state->selected_account = i;
+  }
+  state->account_count = count;
+  cJSON_Delete(arr);
+}
+
+void account_write(AccountState *state) {
+  cJSON *arr = cJSON_CreateArray();
+  for (int i = 0; i < state->account_count; i++) {
+    AccountInfo *a = &state->accounts[i];
+    cJSON *obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(obj, "username", a->username);
+    cJSON_AddStringToObject(obj, "uuid", a->uuid);
+    cJSON_AddStringToObject(obj, "type", a->type);
+    cJSON_AddStringToObject(obj, "access_token", a->access_token);
+    cJSON_AddStringToObject(obj, "refresh_token", a->refresh_token);
+    cJSON_AddStringToObject(obj, "auth_server", a->auth_server);
+    cJSON_AddStringToObject(obj, "skin_path", a->skin_path);
+    cJSON_AddBoolToObject(obj, "selected", a->selected ? 1 : 0);
+    cJSON_AddItemToArray(arr, obj);
+  }
+  char *json = cJSON_Print(arr);
+  // 确保 ~/.tmcl/ 目录存在
+  char dir[1100];
+  snprintf(dir, sizeof(dir), "%s", state->accounts_file);
+  char *slash = strrchr(dir, '/');
+  if (slash) { *slash = '\0'; mkdir(dir, 0755); }
+  FILE *f = fopen(state->accounts_file, "w");
+  if (f) { fputs(json, f); fclose(f); }
+  free(json);
+  cJSON_Delete(arr);
+}
+
+AccountInfo *account_get_selected(AccountState *state) {
+  for (int i = 0; i < state->account_count; i++) {
+    if (state->accounts[i].selected) return &state->accounts[i];
+  }
+  return NULL;
+}
+
+void account_cleanup(AccountState *state) {
+  if (state->accounts) { free(state->accounts); state->accounts = NULL; }
+  state->account_count = 0;
+}
+
+// ======================== 新建账户弹窗 ========================
+static void new_account_popup(AccountState *state) {
+  // ---- Step 1: 选择账户类型 ----
+  const char *types[] = {"Offline", "Microsoft", "LittleSkin",
+                          "Custom Yggdrasil"};
+  const char *type_keys[] = {"offline", "microsoft", "littleskin",
+                              "third_party"};
+  int sel = 0;
+
+  while (1) {
+    clear();
+    mvprintw(3, 4, "Select account type:");
+    for (int i = 0; i < 4; i++) {
+      if (i == sel) attron(A_REVERSE);
+      mvprintw(5 + i, 6, "%s", types[i]);
+      if (i == sel) attroff(A_REVERSE);
+    }
+    mvprintw(11, 4, "j/k: move  Enter: confirm  q: cancel");
+
+    int c = getch();
+    if (c == 'j' && sel < 3) sel++;
+    if (c == 'k' && sel > 0) sel--;
+    if (c == '\n') break;
+    if (c == 'q') { clear(); return; }
+  }
+
+  // ---- Step 2: 非离线账户 ----
+  if (sel == 1) {
+    // ---- Microsoft 登录 ----
+    char *user_code = NULL, *msg = NULL;
+    const char *cid = "00000000402b5328";
+    if (!ms_device_code(&user_code, &msg, cid)) {
+      clear();
+      mvprintw(3, 4, "Failed to request device code.");
+      mvprintw(5, 4, "%s", msg ? msg : "Unknown error");
+      mvprintw(8, 4, "Press any key to return...");
+      getch(); free(msg); clear(); return;
+    }
+
+    // 显示 URL 和验证码
+    clear();
+    mvprintw(3, 4, "Microsoft Login - Device Code Flow");
+    mvprintw(5, 4, "%s", msg ? msg : "");
+    mvprintw(7, 4, "Code: %s", user_code);
+    mvprintw(9, 4, "Open https://microsoft.com/link on another device");
+    mvprintw(11, 4, "Waiting for approval...");
+    refresh();
+
+    // 轮询 MS token（返回 JSON: {"access_token":"...","refresh_token":"..."}）
+    char *ms_json = ms_poll_token(cid);
+    if (!ms_json) {
+      clear(); mvprintw(5, 4, "Login timed out or failed.");
+      mvprintw(7, 4, "Press any key to return..."); getch(); clear();
+      free(user_code); free(msg); ms_cleanup(); return;
+    }
+    cJSON *ms_j = cJSON_Parse(ms_json);
+    char *ms_token = ms_j ? js_get_str(ms_j, "access_token") : NULL;
+    char *ms_refresh = ms_j ? js_get_str(ms_j, "refresh_token") : NULL;
+    cJSON_Delete(ms_j); free(ms_json);
+
+    if (!ms_token) {
+      clear(); mvprintw(5, 4, "No access token received.");
+      mvprintw(7, 4, "Press any key..."); getch(); clear();
+      free(ms_refresh); free(user_code); free(msg); ms_cleanup(); return;
+    }
+
+    // Xbox 链
+    char *xbox = ms_xbox_auth(ms_token);
+    if (!xbox) {
+      clear(); mvprintw(5, 4, "Xbox Live auth failed.");
+      mvprintw(7, 4, "Press any key..."); getch(); clear();
+      free(ms_token); free(ms_refresh); free(user_code); free(msg); ms_cleanup(); return;
+    }
+
+    char *xsts_json = ms_xsts_auth(xbox);
+    if (!xsts_json) {
+      clear(); mvprintw(5, 4, "XSTS auth failed.");
+      mvprintw(7, 4, "Press any key..."); getch(); clear();
+      free(ms_token); free(ms_refresh); free(xbox); free(user_code); free(msg); ms_cleanup(); return;
+    }
+
+    char *mc_token = ms_mc_login(xsts_json);
+    if (!mc_token) {
+      clear(); mvprintw(5, 4, "Minecraft login failed.");
+      mvprintw(7, 4, "Press any key..."); getch(); clear();
+      free(ms_token); free(ms_refresh); free(xbox); free(xsts_json);
+      free(user_code); free(msg); ms_cleanup(); return;
+    }
+
+    // 获取 Profile
+    char mc_uuid[64] = {0}, mc_name[32] = {0};
+    if (!ms_profile(mc_token, mc_uuid, sizeof(mc_uuid), mc_name, sizeof(mc_name))) {
+      clear(); mvprintw(5, 4, "Failed to get Minecraft profile.");
+      mvprintw(7, 4, "Do you own Minecraft Java Edition?");
+      mvprintw(9, 4, "Press any key..."); getch(); clear();
+      free(ms_token); free(ms_refresh); free(xbox); free(xsts_json); free(mc_token);
+      free(user_code); free(msg); ms_cleanup(); return;
+    }
+
+    // 创建账户
+    state->account_count++;
+    state->accounts = realloc(state->accounts,
+                              state->account_count * sizeof(AccountInfo));
+    AccountInfo *a = &state->accounts[state->account_count - 1];
+    memset(a, 0, sizeof(*a));
+    strncpy(a->username, mc_name, sizeof(a->username) - 1);
+    strncpy(a->uuid, mc_uuid, sizeof(a->uuid) - 1);
+    strncpy(a->type, type_keys[sel], sizeof(a->type) - 1);
+    strncpy(a->access_token, mc_token, sizeof(a->access_token) - 1);
+    if (ms_refresh) {
+      strncpy(a->refresh_token, ms_refresh, sizeof(a->refresh_token) - 1);
+    }
+    a->selected = 0;
+    if (state->account_count == 1) {
+      a->selected = 1;
+      state->selected_account = 0;
+    }
+    account_write(state);
+
+    free(ms_token); free(ms_refresh); free(xbox); free(xsts_json); free(mc_token);
+    free(user_code); free(msg); ms_cleanup();
+    clear();
+    return;
+  }
+
+  if (sel == 2) {
+    // ---- LittleSkin 登录 ----
+    echo();
+    curs_set(1);
+    clear();
+    mvprintw(3, 4, "LittleSkin Login");
+    mvprintw(5, 4, "Enter email:");
+    mvprintw(7, 4, "> ");
+    char email[64] = {0};
+    getnstr(email, sizeof(email) - 1);
+
+    mvprintw(9, 4, "Enter password:");
+    mvprintw(11, 4, "> ");
+    noecho();
+    char password[64] = {0};
+    getnstr(password, sizeof(password) - 1);
+    echo();
+    noecho();
+    curs_set(0);
+    clear();
+
+    if (email[0] == '\0' || password[0] == '\0') return;
+
+    char ls_uuid[64] = {0}, ls_name[32] = {0}, ls_token[512] = {0};
+    if (!ygg_login(LITTLESKIN_AUTH, email, password,
+                   ls_uuid, sizeof(ls_uuid),
+                   ls_name, sizeof(ls_name),
+                   ls_token, sizeof(ls_token))) {
+      clear();
+      mvprintw(5, 4, "Login failed. Check email/password.");
+      mvprintw(7, 4, "Press any key to return...");
+      getch(); clear(); return;
+    }
+
+    // 创建账户
+    state->account_count++;
+    state->accounts = realloc(state->accounts,
+                              state->account_count * sizeof(AccountInfo));
+    AccountInfo *a = &state->accounts[state->account_count - 1];
+    memset(a, 0, sizeof(*a));
+    strncpy(a->username, ls_name, sizeof(a->username) - 1);
+    strncpy(a->uuid, ls_uuid, sizeof(a->uuid) - 1);
+    strncpy(a->type, type_keys[sel], sizeof(a->type) - 1);
+    strncpy(a->access_token, ls_token, sizeof(a->access_token) - 1);
+    strncpy(a->auth_server, LITTLESKIN_AUTH, sizeof(a->auth_server) - 1);
+    a->selected = 0;
+    if (state->account_count == 1) {
+      a->selected = 1;
+      state->selected_account = 0;
+    }
+    account_write(state);
+    clear();
+    return;
+  }
+
+  if (sel == 3) {
+    // Custom Yggdrasil — Coming Soon
+    clear();
+    mvprintw(5, 4, "Custom Yggdrasil");
+    mvprintw(7, 4, "Coming soon!");
+    mvprintw(9, 4, "Press any key to return...");
+    getch();
+    clear();
+    return;
+  }
+
+  // ---- Step 3: 离线账户 — 输入用户名 ----
+  echo();
+  curs_set(1);
+  clear();
+  mvprintw(3, 4, "New offline account");
+  mvprintw(5, 4, "Enter username (letters, digits, _, -):");
+  mvprintw(7, 4, "> ");
+
+  char input[32] = {0};
+  getnstr(input, sizeof(input) - 1);
+
+  // 过滤非法字符
+  char clean[32] = {0};
+  int j = 0;
+  for (int i = 0; input[i] && j < (int)sizeof(clean) - 1; i++) {
+    char c = input[i];
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || c == '_' || c == '-') {
+      clean[j++] = c;
+    }
+  }
+  clean[j] = '\0';
+
+  noecho();
+  curs_set(0);
+  clear();
+
+  if (clean[0] == '\0') return;
+
+  // 检查重名
+  for (int i = 0; i < state->account_count; i++) {
+    if (strcmp(state->accounts[i].username, clean) == 0) {
+      mvprintw(5, 4, "Account '%s' already exists!", clean);
+      mvprintw(7, 4, "Press any key to return...");
+      getch();
+      clear();
+      return;
+    }
+  }
+
+  // 创建账户
+  state->account_count++;
+  state->accounts = realloc(state->accounts,
+                            state->account_count * sizeof(AccountInfo));
+  AccountInfo *a = &state->accounts[state->account_count - 1];
+  memset(a, 0, sizeof(*a));
+
+  strncpy(a->username, clean, sizeof(a->username) - 1);
+  offline_uuid(clean, a->uuid, sizeof(a->uuid));
+  strncpy(a->type, type_keys[sel], sizeof(a->type) - 1);
+  a->selected = 0;
+
+  if (state->account_count == 1) {
+    a->selected = 1;
+    state->selected_account = 0;
+  }
+
+  account_write(state);
+}
+
+// ======================== 删除账户弹窗 ========================
+static void delete_account_popup(AccountState *state, int index) {
+  if (index < 0 || index >= state->account_count) return;
+
+  clear();
+  int row, col;
+  getmaxyx(stdscr, row, col);
+  mvprintw(3, 4, "Delete account:");
+  mvprintw(5, 4, "  %s (%s)", state->accounts[index].username,
+           state->accounts[index].type);
+  mvprintw(7, 4, "Are you sure? [y/N]");
+
+  int c = getch();
+  if (c != 'y' && c != 'Y') { clear(); return; }
+
+  // 从数组中移除
+  for (int i = index; i < state->account_count - 1; i++) {
+    state->accounts[i] = state->accounts[i + 1];
+  }
+  state->account_count--;
+
+  if (state->account_count == 0) {
+    free(state->accounts);
+    state->accounts = NULL;
+    state->selected_account = 0;
+  } else {
+    state->accounts = realloc(state->accounts,
+                              state->account_count * sizeof(AccountInfo));
+    if (index <= state->selected_account && state->selected_account > 0) {
+      state->selected_account--;
+    }
+    // 如果删除的是选中账户，选第一个
+    if (state->accounts[state->selected_account].selected == 0) {
+      int found = 0;
+      for (int i = 0; i < state->account_count; i++) {
+        if (state->accounts[i].selected) { found = 1; break; }
+      }
+      if (!found && state->account_count > 0) {
+        state->accounts[0].selected = 1;
+        state->selected_account = 0;
+      }
+    }
+  }
+
+  account_write(state);
+  clear();
+}
+
+// ======================== 账户页面 ========================
 void account_page(int ch, int *middlep, AccountState *state) {
   clear();
   int row = 0, col = 0;
   getmaxyx(stdscr, row, col);
 
-  // 页面标题和导航
-  move(0, 0);
-  printw("[V]ersion [C]onfig ");
-  attron(A_REVERSE);
-  printw("[A]ccount");
-  attroff(A_REVERSE);
-  mvprintw(0, col - 15, "tap [q] to quit");
-
-  // 处理账户选择导航
+  // 处理输入
   switch (ch) {
-  case 's':
-    // 选择当前账户
+  case 'j':
+    if (state->selected_account < state->account_count - 1) {
+      state->selected_account++;
+      int visible = row - 10;
+      if (state->selected_account >= state->scroll_offset + visible)
+        state->scroll_offset++;
+    }
+    break;
+  case 'k':
+    if (state->selected_account > 0) {
+      state->selected_account--;
+      if (state->selected_account < state->scroll_offset)
+        state->scroll_offset--;
+    }
+    break;
+  case 's': // select — 直接执行并将光标移到 select
     if (state->selected_account >= 0 &&
         state->selected_account < state->account_count) {
-      // 取消之前的选择
-      for (int i = 0; i < state->account_count; i++) {
+      for (int i = 0; i < state->account_count; i++)
         state->accounts[i].selected = 0;
-      }
-      // 选择当前账户
       state->accounts[state->selected_account].selected = 1;
+      account_write(state);
     }
     *middlep = 0;
     break;
-  case 'n':
+  case 'n': // new — 直接执行并将光标移到 new
+    new_account_popup(state);
     *middlep = 1;
     break;
-  case 'd':
+  case 'd': // delete — 直接执行并将光标移到 delete
+    delete_account_popup(state, state->selected_account);
     *middlep = 2;
     break;
   case 'h':
@@ -66,115 +837,81 @@ void account_page(int ch, int *middlep, AccountState *state) {
   case 'l':
     *middlep = (*middlep + 1) % 3;
     break;
-  case 'j': // 向下选择
-    if (state->selected_account < state->account_count - 1) {
-      state->selected_account++;
-      int visible_rows = row - 10;
-      if (state->selected_account >= state->scroll_offset + visible_rows) {
-        state->scroll_offset++;
-      }
-    }
-    break;
-  case 'k': // 向上选择
-    if (state->selected_account > 0) {
-      state->selected_account--;
-      if (state->selected_account < state->scroll_offset) {
-        state->scroll_offset--;
-      }
-    }
-    break;
-  case '\n':
+  case '\n': // Enter — 执行当前光标所在操作
     switch (*middlep) {
     case 0:
-      // 选择当前账户
       if (state->selected_account >= 0 &&
           state->selected_account < state->account_count) {
-        // 取消之前的选择
-        for (int i = 0; i < state->account_count; i++) {
+        for (int i = 0; i < state->account_count; i++)
           state->accounts[i].selected = 0;
-        }
-        // 选择当前账户
         state->accounts[state->selected_account].selected = 1;
+        account_write(state);
       }
       break;
     case 1:
+      new_account_popup(state);
       break;
     case 2:
+      delete_account_popup(state, state->selected_account);
       break;
     }
     break;
   }
 
+  // 图标栏
+  move(0, 0);
+  printw("[V]ersion [C]onfig ");
+  attron(A_REVERSE);
+  printw("[A]ccount");
+  attroff(A_REVERSE);
+  mvprintw(0, col - 15, "tap [q] to quit");
+
+  // 空状态
+  if (state->account_count == 0) {
+    mvprintw(4, 4, "No accounts. Press [n]ew to add one.");
+    goto bottom;
+  }
+
+  // 账户列表
   mvprintw(2, 2, "  Type       Name");
   mvprintw(3, 2, "  ----       ----");
-  // 显示账户列表
   int start_y = 4;
   int max_display = row - start_y - 3;
 
   for (int i = state->scroll_offset;
        i < state->account_count && i < state->scroll_offset + max_display;
        i++) {
-
     move(start_y + i - state->scroll_offset, 2);
+    if (i == state->selected_account) attron(A_REVERSE);
 
-    if (i == state->selected_account) {
-      attron(A_REVERSE);
-    }
-
-    // 显示账户状态和基本信息
-    char status[4];
-    if (state->accounts[i].selected) {
-      strcpy(status, "*");
-    } else {
-      strcpy(status, " ");
-    }
-
-    printw("%s %s    %s", status, state->accounts[i].type,
+    char star[4];
+    strcpy(star, state->accounts[i].selected ? "*" : " ");
+    printw("%s %-10s %s", star, state->accounts[i].type,
            state->accounts[i].username);
 
-    if (i == state->selected_account) {
-      attroff(A_REVERSE);
-    }
+    if (i == state->selected_account) attroff(A_REVERSE);
   }
 
-  // 显示滚动提示
-  if (state->scroll_offset > 0) {
+  if (state->scroll_offset > 0)
     mvprintw(start_y - 1, 2, "...more above...");
-  }
-  if (state->scroll_offset + max_display < state->account_count) {
-    mvprintw(start_y + max_display, 2, "...more balow...");
-  }
+  if (state->scroll_offset + max_display < state->account_count)
+    mvprintw(start_y + max_display, 2, "...more below...");
 
-  // 底部操作提示
+bottom:
+  // 底部操作栏
   switch (*middlep) {
   case 0:
-    attron(A_REVERSE);
-    mvprintw(row - 1, 0, "[s]elect");
-    attroff(A_REVERSE);
+    attron(A_REVERSE); mvprintw(row - 1, 0, "[s]elect"); attroff(A_REVERSE);
     printw(" [n]ew [d]elete");
     break;
   case 1:
     mvprintw(row - 1, 0, "[s]elect ");
-    attron(A_REVERSE);
-    printw("[n]ew");
-    attroff(A_REVERSE);
+    attron(A_REVERSE); printw("[n]ew"); attroff(A_REVERSE);
     printw(" [d]elete");
     break;
   case 2:
     mvprintw(row - 1, 0, "[s]elect [n]ew ");
-    attron(A_REVERSE);
-    printw("[d]elete");
-    attroff(A_REVERSE);
+    attron(A_REVERSE); printw("[d]elete"); attroff(A_REVERSE);
     break;
   }
-}
-
-void account_write(AccountState *state) {}
-
-void account_cleanup(AccountState *state) {
-  if (state->accounts) {
-    free(state->accounts);
-    state->accounts = NULL;
-  }
-  state->account_count = 0;
 }

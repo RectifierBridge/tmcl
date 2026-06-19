@@ -115,7 +115,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   // 处理配置项选择
   switch (ch) {
   case 'j': // 向下选择
-    if (state->selected_item < state->item_count - 2) {
+    if (state->selected_item < state->item_count - 3) {
       state->selected_item++;
       int visible_rows = row - 10;
       if (state->selected_item >= state->scroll_offset + visible_rows) {
@@ -161,12 +161,13 @@ void config_page(int ch, int *middlep, ConfigState *state) {
 
   mvprintw(2, 2, "Key              Value");
   mvprintw(3, 2, "---              -----");
-  // 显示配置项列表
+  // 显示配置项列表（最后两项 pinned_version / last_play 由系统管理，不展示）
   int start_y = 4;
+  int display_items = state->item_count - 2;
   int max_display = row - start_y - 3;
 
   for (int i = state->scroll_offset;
-       i < state->item_count && i < state->scroll_offset + max_display; i++) {
+       i < display_items && i < state->scroll_offset + max_display; i++) {
 
     move(start_y + i - state->scroll_offset, 2);
 
@@ -185,7 +186,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   if (state->scroll_offset > 0) {
     mvprintw(start_y - 1, 2, "...more above...");
   }
-  if (state->scroll_offset + max_display < state->item_count) {
+  if (state->scroll_offset + max_display < display_items) {
     mvprintw(start_y + max_display, 2, "...more below...");
   }
 

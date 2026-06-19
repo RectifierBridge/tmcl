@@ -1,6 +1,7 @@
 // version.c
 #include "version.h"
 #include "../config/config.h"
+#include "../account/account.h"
 #include "install.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
@@ -488,12 +489,66 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   char assets_dir[256];
   snprintf(assets_dir, sizeof(assets_dir), "%s/assets", mcdir);
 
-  // ---- 账户信息（目前为离线）----
-  const char *uname = "Player";
-  const char *uuid_str = "00000000-0000-0000-0000-000000000000";
-  const char *token_str = "offline_token";
-  const char *utype_str = "mojang";
+  // ---- 账户信息（从选中的账户读取）----
+  AccountInfo *acct = g_account_state ? account_get_selected(g_account_state) : NULL;
+  const char *uname = acct ? acct->username : "Player";
+  const char *uuid_str = acct ? acct->uuid : "00000000-0000-0000-0000-000000000000";
+  const char *token_str = (acct && acct->access_token[0]) ? acct->access_token : "0";
+  // userType: microsoft → msa, 其他 → mojang
+  const char *utype_str = (acct && strcmp(acct->type, "microsoft") == 0) ? "msa" : "mojang";
   const char *vtype_str = state->versions[idx].type;
+
+  // ---- authlib-injector（LittleSkin / 自定义 Yggdrasil 皮肤）----
+  char *injector_arg = NULL;
+  if (acct && (strcmp(acct->type, "littleskin") == 0 ||
+               strcmp(acct->type, "third_party") == 0)) {
+    const char *server = acct->auth_server;
+    if (!server || !server[0]) server = "https://littleskin.cn/api/yggdrasil";
+    char injector_path[600];
+    // 使用 home_dir 路径
+    snprintf(injector_path, sizeof(injector_path), "%s/.tmcl/authlib-injector.jar",
+             ConfigState->home_dir);
+    // 检查是否已有有效的 authlib-injector.jar
+    int need_dl = 1;
+    if (access(injector_path, F_OK) == 0) {
+      FILE *test = fopen(injector_path, "rb");
+      if (test) {
+        unsigned char magic[2];
+        if (fread(magic, 1, 2, test) == 2 &&
+            magic[0] == 'P' && magic[1] == 'K') {
+          need_dl = 0; // 有效 jar
+        }
+        fclose(test);
+      }
+      if (need_dl) remove(injector_path);
+    }
+    if (need_dl) {
+      printf("Downloading authlib-injector...\n");
+      // 先通过 API 获取真实下载 URL
+      char url_buf[512] = {0};
+      FILE *fp = popen(
+          "curl -sL 'https://authlib-injector.yushi.moe/artifact/latest.json'",
+          "r");
+      if (fp) {
+        fread(url_buf, 1, sizeof(url_buf) - 1, fp);
+        pclose(fp);
+        cJSON *latest = cJSON_Parse(url_buf);
+        if (latest) {
+          cJSON *dl = cJSON_GetObjectItem(latest, "download_url");
+          if (dl && cJSON_IsString(dl)) {
+            char dcmd[1280];
+            snprintf(dcmd, sizeof(dcmd), "curl -s -L -o \"%s\" \"%s\"",
+                     injector_path, dl->valuestring);
+            system(dcmd);
+          }
+          cJSON_Delete(latest);
+        }
+      }
+    }
+    if (access(injector_path, F_OK) == 0) {
+      asprintf(&injector_arg, "-javaagent:%s=%s", injector_path, server);
+    }
+  }
 
   // ---- 内存（auto 时自动刷新）----
   char mem_arg[80];
@@ -532,6 +587,13 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
                 asset_index, natives_dir, classpath, uname, uuid_str,
                 token_str, utype_str, vtype_str);
 
+    // authlib-injector（LittleSkin / 自定义 Yggdrasil，必须在 -cp 之前）
+    if (injector_arg && ac < 300 - 4) {
+      args[ac++] = injector_arg;
+      tofree[fc++] = injector_arg;
+      args[ac++] = "-Dauthlibinjector.side=client";
+    }
+
     // 确保 -cp 已在 JVM 参数末尾（JSON 中通常有，但也做一次兜底）
     if (ac < 300 - 4) {
       args[ac++] = "-cp";
@@ -559,6 +621,13 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
                                                     "minecraftArguments"));
 
     // 旧版 JVM 参数
+    // authlib-injector（LittleSkin / 自定义 Yggdrasil 皮肤支持）
+    if (injector_arg && ac < 300 - 4) {
+      args[ac++] = injector_arg;
+      tofree[fc++] = injector_arg;
+      args[ac++] = "-Dauthlibinjector.side=client";
+    }
+
     args[ac++] = "-Djava.library.path=";
     args[ac - 1] = malloc(1024);
     tofree[fc++] = args[ac - 1];
