@@ -8,8 +8,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Microsoft OAuth2 客户端 ID（device_code 流程用）
-#define MS_CLIENT_ID "00000000402b5328"
 
 // ======================== curl 辅助 ========================
 // 执行 curl POST/GET，返回响应体（动态分配，调用者 free）
@@ -97,96 +95,6 @@ static void offline_uuid(const char *username, char *out, size_t size) {
            "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
            h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7],
            h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15]);
-}
-
-// ======================== Microsoft 登录 ========================
-
-// Step 1: 请求 device_code。返回时 device_code / interval 存到全局临时变量
-static char *g_dev_code = NULL;
-static int g_dev_interval = 5;
-
-static int ms_device_code(char **user_code_out, char **msg_out,
-                          const char *client_id) {
-  if (!client_id || !client_id[0]) {
-    *msg_out = strdup("Azure client ID is not configured.\n"
-                      "Set ms_client_id in Config page.");
-    return 0;
-  }
-  char post[512];
-  snprintf(post, sizeof(post),
-           "client_id=%s&scope=XboxLive.signin%%20offline_access", client_id);
-  char *resp = curl_fetch(
-      "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
-      post, NULL, "application/x-www-form-urlencoded");
-  if (!resp) return 0;
-  cJSON *j = cJSON_Parse(resp); free(resp);
-  if (!j) return 0;
-
-  cJSON *err = cJSON_GetObjectItem(j, "error");
-  if (err && cJSON_IsString(err)) {
-    cJSON *desc = cJSON_GetObjectItem(j, "error_description");
-    *msg_out = strdup(desc && cJSON_IsString(desc)
-                      ? desc->valuestring
-                      : err->valuestring);
-    cJSON_Delete(j);
-    return 0;
-  }
-
-  cJSON *uc = cJSON_GetObjectItem(j, "user_code");
-  cJSON *msg = cJSON_GetObjectItem(j, "message");
-  cJSON *dc = cJSON_GetObjectItem(j, "device_code");
-  cJSON *iv = cJSON_GetObjectItem(j, "interval");
-  int ok = 0;
-  if (uc && dc && cJSON_IsString(uc) && cJSON_IsString(dc)) {
-    *user_code_out = strdup(uc->valuestring);
-    *msg_out = msg && cJSON_IsString(msg) ? strdup(msg->valuestring)
-                : strdup("Open URL and enter the code");
-    free(g_dev_code);
-    g_dev_code = strdup(dc->valuestring);
-    g_dev_interval = (iv && cJSON_IsNumber(iv)) ? iv->valueint : 5;
-    ok = 1;
-  }
-  cJSON_Delete(j);
-  return ok;
-}
-
-// Step 2: 轮询 token，返回 access_token + refresh_token 的 JSON 字符串
-static char *ms_poll_token(const char *client_id) {
-  if (!g_dev_code) return NULL;
-  char post[512];
-  snprintf(post, sizeof(post),
-           "grant_type=urn%%3Aietf%%3Aparams%%3Aoauth%%3A"
-           "grant-type%%3Adevice_code&device_code=%s&client_id=%s",
-           g_dev_code, client_id);
-
-  for (int i = 0; i < 40; i++) {
-    sleep(g_dev_interval);
-    char *resp = curl_fetch(
-        "https://login.microsoftonline.com/consumers/oauth2/v2.0/token", post,
-        NULL, "application/x-www-form-urlencoded");
-    if (!resp) continue;
-    cJSON *j = cJSON_Parse(resp); free(resp);
-    if (!j) continue;
-
-    cJSON *at = cJSON_GetObjectItem(j, "access_token");
-    cJSON *rt = cJSON_GetObjectItem(j, "refresh_token");
-    cJSON *err = cJSON_GetObjectItem(j, "error");
-
-    if (at) {
-      cJSON *save = cJSON_CreateObject();
-      cJSON_AddStringToObject(save, "access_token", at->valuestring);
-      if (rt) cJSON_AddStringToObject(save, "refresh_token", rt->valuestring);
-      char *result = cJSON_PrintUnformatted(save);
-      cJSON_Delete(save);
-      cJSON_Delete(j);
-      return result; // 调用者 cJSON_free
-    }
-    if (err && strcmp(err->valuestring, "authorization_pending") != 0) {
-      cJSON_Delete(j); return NULL;
-    }
-    cJSON_Delete(j);
-  }
-  return NULL;
 }
 
 // 从保存的 JSON 中提取字段
@@ -297,7 +205,7 @@ static int ms_profile(const char *mc_token, char *uuid_out, size_t uuid_sz,
   return ok;
 }
 
-static void ms_cleanup() { free(g_dev_code); g_dev_code = NULL; }
+static void ms_cleanup() {}
 
 // ======================== LittleSkin / Yggdrasil 登录 ========================
 #define LITTLESKIN_ROOT "https://littleskin.cn/api/yggdrasil"
@@ -391,6 +299,45 @@ static int ygg_login(const char *server, const char *email, const char *password
   return 1;
 }
 
+// ---- Token 刷新（启动前调用，失败则保留旧 token）----
+static void ygg_refresh_token(AccountInfo *a) {
+  if (!a || !a->access_token[0] || !a->auth_server[0]) return;
+
+  // Step 1: 验证当前 token
+  char *vp = NULL;
+  asprintf(&vp, "{\"accessToken\":\"%s\"}", a->access_token);
+  if (!vp) return;
+  char validate_url[512];
+  snprintf(validate_url, sizeof(validate_url), "%s/authserver/validate",
+           a->auth_server);
+  char *v_resp = curl_fetch(validate_url, vp, NULL, "application/json");
+  free(vp);
+  if (v_resp) { free(v_resp); return; } // 204 No Content → valid, 无需刷新
+
+  // Step 2: 刷新 token
+  char *rp = NULL;
+  asprintf(&rp,
+           "{\"accessToken\":\"%s\",\"clientToken\":\"%s\"}",
+           a->access_token, a->uuid);
+  if (!rp) return;
+  char refresh_url[512];
+  snprintf(refresh_url, sizeof(refresh_url), "%s/authserver/refresh",
+           a->auth_server);
+  char *r_resp = curl_fetch(refresh_url, rp, NULL, "application/json");
+  free(rp);
+  if (!r_resp) return;
+
+  cJSON *j = cJSON_Parse(r_resp);
+  free(r_resp);
+  if (!j) return;
+  cJSON *at = cJSON_GetObjectItem(j, "accessToken");
+  if (at && cJSON_IsString(at)) {
+    strncpy(a->access_token, at->valuestring, sizeof(a->access_token) - 1);
+    a->access_token[sizeof(a->access_token) - 1] = '\0';
+  }
+  cJSON_Delete(j);
+}
+
 // ======================== 账户管理 ========================
 
 AccountState *g_account_state = NULL;
@@ -480,6 +427,8 @@ void account_write(AccountState *state) {
   cJSON_Delete(arr);
 }
 
+void account_refresh_token(AccountInfo *a) { ygg_refresh_token(a); }
+
 AccountInfo *account_get_selected(AccountState *state) {
   for (int i = 0; i < state->account_count; i++) {
     if (state->accounts[i].selected) return &state->accounts[i];
@@ -520,99 +469,12 @@ static void new_account_popup(AccountState *state) {
 
   // ---- Step 2: 非离线账户 ----
   if (sel == 1) {
-    // ---- Microsoft 登录 ----
-    char *user_code = NULL, *msg = NULL;
-    const char *cid = "00000000402b5328";
-    if (!ms_device_code(&user_code, &msg, cid)) {
-      clear();
-      mvprintw(3, 4, "Failed to request device code.");
-      mvprintw(5, 4, "%s", msg ? msg : "Unknown error");
-      mvprintw(8, 4, "Press any key to return...");
-      getch(); free(msg); clear(); return;
-    }
-
-    // 显示 URL 和验证码
+    // Microsoft — 待后续开发
     clear();
-    mvprintw(3, 4, "Microsoft Login - Device Code Flow");
-    mvprintw(5, 4, "%s", msg ? msg : "");
-    mvprintw(7, 4, "Code: %s", user_code);
-    mvprintw(9, 4, "Open https://microsoft.com/link on another device");
-    mvprintw(11, 4, "Waiting for approval...");
-    refresh();
-
-    // 轮询 MS token（返回 JSON: {"access_token":"...","refresh_token":"..."}）
-    char *ms_json = ms_poll_token(cid);
-    if (!ms_json) {
-      clear(); mvprintw(5, 4, "Login timed out or failed.");
-      mvprintw(7, 4, "Press any key to return..."); getch(); clear();
-      free(user_code); free(msg); ms_cleanup(); return;
-    }
-    cJSON *ms_j = cJSON_Parse(ms_json);
-    char *ms_token = ms_j ? js_get_str(ms_j, "access_token") : NULL;
-    char *ms_refresh = ms_j ? js_get_str(ms_j, "refresh_token") : NULL;
-    cJSON_Delete(ms_j); free(ms_json);
-
-    if (!ms_token) {
-      clear(); mvprintw(5, 4, "No access token received.");
-      mvprintw(7, 4, "Press any key..."); getch(); clear();
-      free(ms_refresh); free(user_code); free(msg); ms_cleanup(); return;
-    }
-
-    // Xbox 链
-    char *xbox = ms_xbox_auth(ms_token);
-    if (!xbox) {
-      clear(); mvprintw(5, 4, "Xbox Live auth failed.");
-      mvprintw(7, 4, "Press any key..."); getch(); clear();
-      free(ms_token); free(ms_refresh); free(user_code); free(msg); ms_cleanup(); return;
-    }
-
-    char *xsts_json = ms_xsts_auth(xbox);
-    if (!xsts_json) {
-      clear(); mvprintw(5, 4, "XSTS auth failed.");
-      mvprintw(7, 4, "Press any key..."); getch(); clear();
-      free(ms_token); free(ms_refresh); free(xbox); free(user_code); free(msg); ms_cleanup(); return;
-    }
-
-    char *mc_token = ms_mc_login(xsts_json);
-    if (!mc_token) {
-      clear(); mvprintw(5, 4, "Minecraft login failed.");
-      mvprintw(7, 4, "Press any key..."); getch(); clear();
-      free(ms_token); free(ms_refresh); free(xbox); free(xsts_json);
-      free(user_code); free(msg); ms_cleanup(); return;
-    }
-
-    // 获取 Profile
-    char mc_uuid[64] = {0}, mc_name[32] = {0};
-    if (!ms_profile(mc_token, mc_uuid, sizeof(mc_uuid), mc_name, sizeof(mc_name))) {
-      clear(); mvprintw(5, 4, "Failed to get Minecraft profile.");
-      mvprintw(7, 4, "Do you own Minecraft Java Edition?");
-      mvprintw(9, 4, "Press any key..."); getch(); clear();
-      free(ms_token); free(ms_refresh); free(xbox); free(xsts_json); free(mc_token);
-      free(user_code); free(msg); ms_cleanup(); return;
-    }
-
-    // 创建账户
-    state->account_count++;
-    state->accounts = realloc(state->accounts,
-                              state->account_count * sizeof(AccountInfo));
-    AccountInfo *a = &state->accounts[state->account_count - 1];
-    memset(a, 0, sizeof(*a));
-    strncpy(a->username, mc_name, sizeof(a->username) - 1);
-    strncpy(a->uuid, mc_uuid, sizeof(a->uuid) - 1);
-    strncpy(a->type, type_keys[sel], sizeof(a->type) - 1);
-    strncpy(a->access_token, mc_token, sizeof(a->access_token) - 1);
-    if (ms_refresh) {
-      strncpy(a->refresh_token, ms_refresh, sizeof(a->refresh_token) - 1);
-    }
-    a->selected = 0;
-    if (state->account_count == 1) {
-      a->selected = 1;
-      state->selected_account = 0;
-    }
-    account_write(state);
-
-    free(ms_token); free(ms_refresh); free(xbox); free(xsts_json); free(mc_token);
-    free(user_code); free(msg); ms_cleanup();
+    mvprintw(5, 4, "Microsoft Login");
+    mvprintw(7, 4, "Coming soon!");
+    mvprintw(9, 4, "Press any key to return...");
+    getch();
     clear();
     return;
   }

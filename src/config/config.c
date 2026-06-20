@@ -15,7 +15,7 @@ void config_init(ConfigState *state) {
   // 初始化配置项
   char *home_dir = getenv("HOME");
   strcpy(state->home_dir, home_dir);
-  state->item_count = 9;
+  state->item_count = 10;
   state->items = malloc(state->item_count * sizeof(ConfigItem));
 
   // 打开tmcl目录
@@ -31,9 +31,11 @@ void config_init(ConfigState *state) {
   snprintf(game_dir, sizeof(game_dir), "%s/.minecraft", home_dir);
   char *keys[] = {"java_path",      "memory",          "game_dir",
                   "jvm_args",       "download_cource", "mod_source",
-                  "threads",        "pinned_version",  "last_play"};
+                  "threads",        "isolate",         "pinned_version",
+                  "last_play"};
   char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
-                            "Official",       "CurseForge", "96",     "", ""};
+                            "Official",       "CurseForge", "96",     "yes",
+                            "",               ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -115,7 +117,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   // 处理配置项选择
   switch (ch) {
   case 'j': // 向下选择
-    if (state->selected_item < state->item_count - 3) {
+    if (state->selected_item < state->item_count - 3) { // 最后 2 项不可选
       state->selected_item++;
       int visible_rows = row - 10;
       if (state->selected_item >= state->scroll_offset + visible_rows) {
@@ -362,6 +364,33 @@ void change_config(ConfigState *state) {
     }
     noecho();
     curs_set(0);
+    clear();
+
+  } else if (idx == 7) {
+    // ---- isolate：yes / no 选择器 ----
+    const char *opts[] = {"yes", "no"};
+    int sel = (strcmp(state->items[idx].value, "no") == 0) ? 1 : 0;
+    while (1) {
+      clear();
+      mvprintw(3, 2, "Change config: %s", state->items[idx].key);
+      mvprintw(5, 2, "Current: %s", state->items[idx].value);
+      mvprintw(7, 2, "yes = each version has its own saves/mods");
+      mvprintw(8, 2, "no  = all versions share .minecraft");
+      mvprintw(10, 2, "Select (j/k: switch, Enter: confirm, q: cancel):");
+      for (int i = 0; i < 2; i++) {
+        if (i == sel) attron(A_REVERSE);
+        mvprintw(12 + i, 4, "%s", opts[i]);
+        if (i == sel) attroff(A_REVERSE);
+      }
+      int c = getch();
+      if (c == 'j' || c == 'l') sel = 1;
+      else if (c == 'k' || c == 'h') sel = 0;
+      else if (c == '\n') {
+        strcpy(state->items[idx].value, opts[sel]);
+        config_write(state);
+        break;
+      } else if (c == 'q') break;
+    }
     clear();
 
   } else if (idx < 4) {

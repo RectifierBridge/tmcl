@@ -385,8 +385,28 @@ static int dl_one(const char *url, const char *dest, const char *label) {
   if (!done) { printf("  \033[31mWAIT\033[0m %s\n", label); return 1; }
 
   if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-    printf("  \033[32mOK\033[0m  %s\n", label);
-    return 0;
+    // 验证下载完整性：检查 zip PK 开头 + END 结尾
+    FILE *vf = fopen(dest, "rb");
+    if (vf) {
+      unsigned char magic[2];
+      if (fread(magic, 1, 2, vf) == 2 && magic[0] == 'P' && magic[1] == 'K') {
+        // 检查 zip END header（末尾 22 字节中的 signature 0x06054b50）
+        fseek(vf, -22, SEEK_END);
+        unsigned char end[4];
+        if (fread(end, 1, 4, vf) == 4 &&
+            end[0] == 0x50 && end[1] == 0x4b &&
+            end[2] == 0x05 && end[3] == 0x06) {
+          fclose(vf);
+          printf("  \033[32mOK\033[0m  %s\n", label);
+          return 0;
+        }
+      }
+      fclose(vf);
+    }
+    // 文件损坏 → 删除并标记失败
+    remove(dest);
+    printf("  \033[31mCORRUPT\033[0m %s\n", label);
+    return 1;
   } else {
     printf("  \033[31mFAIL\033[0m %s\n", label);
     return 1;

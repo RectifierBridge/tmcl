@@ -32,6 +32,7 @@ void account_write(AccountState *state);
 void account_cleanup(AccountState *state);
 // 获取当前选中账户（供 begin_version 使用）
 AccountInfo *account_get_selected(AccountState *state);
+void account_refresh_token(AccountInfo *a);
 // 全局指针，由 main.c 设置
 extern AccountState *g_account_state;
 

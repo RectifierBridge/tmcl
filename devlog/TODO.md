@@ -23,15 +23,15 @@
 - [x] OAuth2 device code flow（显示 microsoft.com/link + 验证码）
 - [x] MS token → Xbox Live → XSTS → Minecraft token 链
 - [x] 自动获取 Minecraft Profile（UUID + 用户名）
-- [x] 账户信息持久化（含 access_token + refresh_token）
+- [ ] 账户信息持久化（含 access_token + refresh_token）
 
 ### P4 — LittleSkin 登录
-- [ ] Yggdrasil API: /authserver/authenticate
-- [ ] 邮箱 + 密码输入 UI
+- [x] Yggdrasil API: /authserver/authenticate
+- [x] 邮箱 + 密码输入 UI
 
 ### P5 — 离线皮肤
-- [ ] 皮肤文件路径存储
-- [ ] 启动时注入皮肤路径参数
+- [x] 皮肤文件路径存储
+- [x] 启动时注入皮肤路径参数
 
 ### P6 — 自定义 Yggdrasil ✅
 

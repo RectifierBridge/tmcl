@@ -1,7 +1,7 @@
 // version.c
 #include "version.h"
-#include "../config/config.h"
 #include "../account/account.h"
+#include "../config/config.h"
 #include "install.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
@@ -132,13 +132,23 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
               state->versions[count]
                   .version[sizeof(state->versions[count].version) - 1] = '\0';
             } else {
-              strncpy(state->versions[count].version, "unknown",
-                      sizeof(state->versions[count].version) - 1);
-              state->versions[count]
-                  .version[sizeof(state->versions[count].version) - 1] =
-                  '\0'; // 补充缺失的终止符
-            }
+              cJSON *game_version = cJSON_GetObjectItem(json, "id");
+              if (game_version && game_version->valuestring) {
 
+                strncpy(state->versions[count].version,
+                        game_version->valuestring,
+                        sizeof(state->versions[count].version) - 1);
+                state->versions[count]
+                    .version[sizeof(state->versions[count].version) - 1] = '\0';
+
+              } else {
+                strncpy(state->versions[count].version, "unknown",
+                        sizeof(state->versions[count].version) - 1);
+                state->versions[count]
+                    .version[sizeof(state->versions[count].version) - 1] =
+                    '\0'; // 补充缺失的终止符
+              }
+            }
             // modloader 检查 fabric / forge
             if (mod_loader_fabric) {
               strncpy(state->versions[count].modloader, "fabric",
@@ -247,22 +257,38 @@ static void sub_arg(char *dest, const char *src, size_t dest_size,
           memcpy(key, p + 2, plen);
 
         const char *val = NULL;
-        if (strcmp(key, "auth_player_name") == 0)      val = uname;
-        else if (strcmp(key, "version_name") == 0)     val = vname;
-        else if (strcmp(key, "game_directory") == 0)   val = gdir;
-        else if (strcmp(key, "assets_root") == 0)      val = adir;
-        else if (strcmp(key, "assets_index_name") == 0) val = aidx;
-        else if (strcmp(key, "auth_uuid") == 0)        val = uuid;
-        else if (strcmp(key, "auth_access_token") == 0) val = tok;
-        else if (strcmp(key, "user_type") == 0)        val = utype;
-        else if (strcmp(key, "version_type") == 0)     val = vtype;
-        else if (strcmp(key, "natives_directory") == 0) val = ndir;
-        else if (strcmp(key, "launcher_name") == 0)    val = "tmcl";
-        else if (strcmp(key, "launcher_version") == 0) val = "0.0.1";
-        else if (strcmp(key, "classpath") == 0)        val = cp;
-        else if (strcmp(key, "clientid") == 0)         val = "0";
-        else if (strcmp(key, "auth_xuid") == 0)        val = "0";
-        else if (strcmp(key, "user_properties") == 0) val = "{}";
+        if (strcmp(key, "auth_player_name") == 0)
+          val = uname;
+        else if (strcmp(key, "version_name") == 0)
+          val = vname;
+        else if (strcmp(key, "game_directory") == 0)
+          val = gdir;
+        else if (strcmp(key, "assets_root") == 0)
+          val = adir;
+        else if (strcmp(key, "assets_index_name") == 0)
+          val = aidx;
+        else if (strcmp(key, "auth_uuid") == 0)
+          val = uuid;
+        else if (strcmp(key, "auth_access_token") == 0)
+          val = tok;
+        else if (strcmp(key, "user_type") == 0)
+          val = utype;
+        else if (strcmp(key, "version_type") == 0)
+          val = vtype;
+        else if (strcmp(key, "natives_directory") == 0)
+          val = ndir;
+        else if (strcmp(key, "launcher_name") == 0)
+          val = "tmcl";
+        else if (strcmp(key, "launcher_version") == 0)
+          val = "0.0.1";
+        else if (strcmp(key, "classpath") == 0)
+          val = cp;
+        else if (strcmp(key, "clientid") == 0)
+          val = "0";
+        else if (strcmp(key, "auth_xuid") == 0)
+          val = "0";
+        else if (strcmp(key, "user_properties") == 0)
+          val = "{}";
 
         if (val) {
           size_t rlen = strlen(val);
@@ -283,7 +309,8 @@ static void sub_arg(char *dest, const char *src, size_t dest_size,
 
 // 检查 rules 数组是否允许当前平台 (linux)
 static int rules_ok(cJSON *rules) {
-  if (!rules || !cJSON_IsArray(rules)) return 1; // 无规则则允许
+  if (!rules || !cJSON_IsArray(rules))
+    return 1; // 无规则则允许
   int allowed = 0;
   cJSON *rule;
   cJSON_ArrayForEach(rule, rules) {
@@ -293,16 +320,20 @@ static int rules_ok(cJSON *rules) {
 
     // 无 os 且无 features → 全局规则
     if (!os && !features) {
-      if (action && strcmp(action->valuestring, "disallow") == 0) allowed = 0;
-      if (action && strcmp(action->valuestring, "allow") == 0) allowed = 1;
+      if (action && strcmp(action->valuestring, "disallow") == 0)
+        allowed = 0;
+      if (action && strcmp(action->valuestring, "allow") == 0)
+        allowed = 1;
       continue;
     }
 
     if (os) {
       cJSON *os_name = cJSON_GetObjectItem(os, "name");
       if (os_name && strcmp(os_name->valuestring, "linux") == 0) {
-        if (action && strcmp(action->valuestring, "allow") == 0) allowed = 1;
-        if (action && strcmp(action->valuestring, "disallow") == 0) allowed = 0;
+        if (action && strcmp(action->valuestring, "allow") == 0)
+          allowed = 1;
+        if (action && strcmp(action->valuestring, "disallow") == 0)
+          allowed = 0;
       }
     }
   }
@@ -314,12 +345,16 @@ static cJSON *read_ver_json(const char *mcdir, const char *vname) {
   char path[512];
   snprintf(path, sizeof(path), "%s/versions/%s/%s.json", mcdir, vname, vname);
   FILE *f = fopen(path, "r");
-  if (!f) return NULL;
+  if (!f)
+    return NULL;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
   fseek(f, 0, SEEK_SET);
   char *data = malloc(sz + 1);
-  if (!data) { fclose(f); return NULL; }
+  if (!data) {
+    fclose(f);
+    return NULL;
+  }
   fread(data, 1, sz, f);
   data[sz] = '\0';
   fclose(f);
@@ -335,10 +370,12 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
                         const char *ndir, const char *cp, const char *uname,
                         const char *uuid, const char *tok, const char *utype,
                         const char *vtype) {
-  if (!arr || !cJSON_IsArray(arr)) return;
+  if (!arr || !cJSON_IsArray(arr))
+    return;
   cJSON *it;
   cJSON_ArrayForEach(it, arr) {
-    if (*ac >= max_ac - 1) break;
+    if (*ac >= max_ac - 1)
+      break;
 
     if (cJSON_IsString(it)) {
       char *buf = malloc(1024);
@@ -348,9 +385,11 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
       (*tofree)[(*fc)++] = buf;
     } else if (cJSON_IsObject(it)) {
       cJSON *rules = cJSON_GetObjectItem(it, "rules");
-      if (!rules_ok(rules)) continue;
+      if (!rules_ok(rules))
+        continue;
       cJSON *val = cJSON_GetObjectItem(it, "value");
-      if (!val) continue;
+      if (!val)
+        continue;
       if (cJSON_IsString(val)) {
         char *buf = malloc(1024);
         sub_arg(buf, val->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
@@ -360,7 +399,8 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
       } else if (cJSON_IsArray(val)) {
         cJSON *vi;
         cJSON_ArrayForEach(vi, val) {
-          if (*ac >= max_ac - 1) break;
+          if (*ac >= max_ac - 1)
+            break;
           if (cJSON_IsString(vi)) {
             char *buf = malloc(1024);
             sub_arg(buf, vi->valuestring, 1024, vname, gdir, adir, aidx, ndir,
@@ -381,7 +421,8 @@ static void legacy_args(const char *mc_args, char **args, int *ac, int max_ac,
                         const char *ndir, const char *cp, const char *uname,
                         const char *uuid, const char *tok, const char *utype,
                         const char *vtype) {
-  if (!mc_args) return;
+  if (!mc_args)
+    return;
   char *dup = strdup(mc_args);
   char *saveptr;
   char *token = strtok_r(dup, " ", &saveptr);
@@ -439,8 +480,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
 
   // 读取版本 JSON（优先用子版本，其次父版本的信息）
   cJSON *child_json = read_ver_json(mcdir, vname);
-  cJSON *parent_json = (inh && strlen(inh) > 0) ? read_ver_json(mcdir, inh)
-                                                 : NULL;
+  cJSON *parent_json =
+      (inh && strlen(inh) > 0) ? read_ver_json(mcdir, inh) : NULL;
 
   // ---- 决定 mainClass ----
   char main_class[128];
@@ -462,16 +503,20 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     }
   }
 
-  // ---- 找 natives 目录 ----
-  char natives_dir[512] = "";
+  // ---- 游戏目录（根据 isolate 配置决定隔离还是共享）----
   char vdir[512];
   snprintf(vdir, sizeof(vdir), "%s/versions/%s", mcdir, vname);
+  const char *gdir = (strcmp(ConfigState->items[7].value, "no") == 0)
+                         ? mcdir
+                         : vdir;
+
+  // ---- 找 natives 目录 ----
+  char natives_dir[512] = "";
   DIR *ndp = opendir(vdir);
   if (ndp) {
     struct dirent *dent;
     while ((dent = readdir(ndp)) != NULL) {
-      if (strncmp(dent->d_name, "natives", 7) == 0 &&
-          dent->d_type == DT_DIR) {
+      if (strncmp(dent->d_name, "natives", 7) == 0 && dent->d_type == DT_DIR) {
         snprintf(natives_dir, sizeof(natives_dir), "%s/versions/%s/%s", mcdir,
                  vname, dent->d_name);
         break;
@@ -489,13 +534,19 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   char assets_dir[256];
   snprintf(assets_dir, sizeof(assets_dir), "%s/assets", mcdir);
 
-  // ---- 账户信息（从选中的账户读取）----
-  AccountInfo *acct = g_account_state ? account_get_selected(g_account_state) : NULL;
+  // ---- 账户信息（从选中的账户读取，启动前刷新 token）----
+  AccountInfo *acct =
+      g_account_state ? account_get_selected(g_account_state) : NULL;
+  if (acct)
+    account_refresh_token(acct);
   const char *uname = acct ? acct->username : "Player";
-  const char *uuid_str = acct ? acct->uuid : "00000000-0000-0000-0000-000000000000";
-  const char *token_str = (acct && acct->access_token[0]) ? acct->access_token : "0";
+  const char *uuid_str =
+      acct ? acct->uuid : "00000000-0000-0000-0000-000000000000";
+  const char *token_str =
+      (acct && acct->access_token[0]) ? acct->access_token : "0";
   // userType: microsoft → msa, 其他 → mojang
-  const char *utype_str = (acct && strcmp(acct->type, "microsoft") == 0) ? "msa" : "mojang";
+  const char *utype_str =
+      (acct && strcmp(acct->type, "microsoft") == 0) ? "msa" : "mojang";
   const char *vtype_str = state->versions[idx].type;
 
   // ---- 离线皮肤（CustomSkinLoader）----
@@ -516,29 +567,31 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
       server = "https://littleskin.cn/api/yggdrasil"; // 修复旧存储
     char injector_path[600];
     // 使用 home_dir 路径
-    snprintf(injector_path, sizeof(injector_path), "%s/.tmcl/authlib-injector.jar",
-             ConfigState->home_dir);
+    snprintf(injector_path, sizeof(injector_path),
+             "%s/.tmcl/authlib-injector.jar", ConfigState->home_dir);
     // 检查是否已有有效的 authlib-injector.jar
     int need_dl = 1;
     if (access(injector_path, F_OK) == 0) {
       FILE *test = fopen(injector_path, "rb");
       if (test) {
         unsigned char magic[2];
-        if (fread(magic, 1, 2, test) == 2 &&
-            magic[0] == 'P' && magic[1] == 'K') {
+        if (fread(magic, 1, 2, test) == 2 && magic[0] == 'P' &&
+            magic[1] == 'K') {
           need_dl = 0; // 有效 jar
         }
         fclose(test);
       }
-      if (need_dl) remove(injector_path);
+      if (need_dl)
+        remove(injector_path);
     }
     if (need_dl) {
       printf("Downloading authlib-injector...\n");
       // 先通过 API 获取真实下载 URL
       char url_buf[512] = {0};
-      FILE *fp = popen(
-          "curl -sL 'https://authlib-injector.yushi.moe/artifact/latest.json'",
-          "r");
+      FILE *fp =
+          popen("curl -sL "
+                "'https://authlib-injector.yushi.moe/artifact/latest.json'",
+                "r");
       if (fp) {
         fread(url_buf, 1, sizeof(url_buf) - 1, fp);
         pclose(fp);
@@ -593,9 +646,9 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   if (args_obj) {
     // 新版 arguments 格式
     cJSON *jvm = cJSON_GetObjectItem(args_obj, "jvm");
-    append_args(jvm, args, &ac, 300, &tofree, &fc, vname, vdir, assets_dir,
-                asset_index, natives_dir, classpath, uname, uuid_str,
-                token_str, utype_str, vtype_str);
+    append_args(jvm, args, &ac, 300, &tofree, &fc, vname, gdir, assets_dir,
+                asset_index, natives_dir, classpath, uname, uuid_str, token_str,
+                utype_str, vtype_str);
 
     // authlib-injector / 离线皮肤（必须在 -cp 之前）
     if (skin_arg && ac < 300 - 4) {
@@ -619,20 +672,18 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
 
     // 游戏参数
     cJSON *game = cJSON_GetObjectItem(args_obj, "game");
-    append_args(game, args, &ac, 300, &tofree, &fc, vname, vdir, assets_dir,
-                asset_index, natives_dir, classpath, uname, uuid_str,
-                token_str, utype_str, vtype_str);
+    append_args(game, args, &ac, 300, &tofree, &fc, vname, gdir, assets_dir,
+                asset_index, natives_dir, classpath, uname, uuid_str, token_str,
+                utype_str, vtype_str);
   } else {
     // 旧版格式：使用 minecraftArguments
     const char *mc_args = NULL;
     if (child_json)
-      mc_args =
-          cJSON_GetStringValue(cJSON_GetObjectItem(child_json,
-                                                    "minecraftArguments"));
+      mc_args = cJSON_GetStringValue(
+          cJSON_GetObjectItem(child_json, "minecraftArguments"));
     if (!mc_args && parent_json)
-      mc_args =
-          cJSON_GetStringValue(cJSON_GetObjectItem(parent_json,
-                                                    "minecraftArguments"));
+      mc_args = cJSON_GetStringValue(
+          cJSON_GetObjectItem(parent_json, "minecraftArguments"));
 
     // 旧版 JVM 参数
     // 离线皮肤 / authlib-injector
@@ -656,7 +707,7 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     args[ac++] = main_class;
 
     if (mc_args) {
-      legacy_args(mc_args, args, &ac, 300, &tofree, &fc, vname, vdir,
+      legacy_args(mc_args, args, &ac, 300, &tofree, &fc, vname, gdir,
                   assets_dir, asset_index, natives_dir, classpath, uname,
                   uuid_str, token_str, utype_str, vtype_str);
     } else {
@@ -666,7 +717,7 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
       args[ac++] = "--version";
       args[ac++] = (char *)vname;
       args[ac++] = "--gameDir";
-      args[ac++] = vdir;
+      args[ac++] = (char *)gdir;
       args[ac++] = "--assetsDir";
       args[ac++] = assets_dir;
       args[ac++] = "--assetIndex";
@@ -683,8 +734,10 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   args[ac] = NULL;
 
   // ---- 清理 JSON ----
-  if (child_json) cJSON_Delete(child_json);
-  if (parent_json) cJSON_Delete(parent_json);
+  if (child_json)
+    cJSON_Delete(child_json);
+  if (parent_json)
+    cJSON_Delete(parent_json);
 
   // ---- 输出信息 ----
   printf("Launching %s (%s)\n", vname, state->versions[idx].modloader);
@@ -694,7 +747,7 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   printf("  Classpath length: %zu\n", strlen(classpath));
 
   // ---- 执行 ----
-  if (chdir(vdir) != 0) {
+  if (chdir(gdir) != 0) {
     perror("chdir failed");
   }
 
@@ -1021,7 +1074,8 @@ void append_json_libraries(const char *minecraft_dir, const char *version_name,
           char group_path[256];
           snprintf(group_path, sizeof(group_path), "%s", group);
           for (char *gp = group_path; *gp; gp++) {
-            if (*gp == '.') *gp = '/';
+            if (*gp == '.')
+              *gp = '/';
           }
 
           char lib_path[512];
@@ -1057,9 +1111,8 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
 
   // 1) 首先附加上父版本（inheritsFrom）的 libraries 和 jar
   if (strlen(state->versions[index].inheritsFrom) > 0) {
-    append_json_libraries(minecraft_dir,
-                          state->versions[index].inheritsFrom, classpath,
-                          sizeof(classpath));
+    append_json_libraries(minecraft_dir, state->versions[index].inheritsFrom,
+                          classpath, sizeof(classpath));
 
     // 同时添加父版本的 jar（Fabric / 新版 Forge 需要）
     if (strlen(classpath) > 0) {
