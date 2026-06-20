@@ -27,7 +27,10 @@ static int pick_version(InstallState *s);
 static void input_name(char *buf, size_t size);
 static void do_install(ConfigState *cstate, const char *version_id,
                        const char *version_url, const char *custom_name,
-                       const char *modloader, const char *type);
+                       const char *modloader, const char *type,
+                       const char *fabric_loader_ver);
+static char **fabric_loader_versions(const char *mc_version, int *count_out);
+static char *pick_fabric_loader(char **versions, int count);
 
 // ======================== Mod Loader 选择器 ========================
 static int pick_modloader(int cur) {
@@ -67,6 +70,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
   int modloader_sel = 0;
   char selected_version[64] = {0};
   char selected_url[512] = {0};
+  char *fabric_loader_ver = NULL; // 用户选择的 Fabric Loader 版本
 
   // 预拉取 manifest
   fetch_versions(&s, types[s.type_sel]);
@@ -120,6 +124,8 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
         }
         selected_version[0] = '\0';
         selected_url[0] = '\0';
+        free(fabric_loader_ver);
+        fabric_loader_ver = NULL;
         fetch_versions(&s, types[s.type_sel]);
         s.version_sel = 0;
         s.version_scroll = 0;
@@ -150,6 +156,23 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
       case 2: // mod loader
         modloader_sel = pick_modloader(modloader_sel);
         strncpy(modloader, modloaders[modloader_sel], sizeof(modloader) - 1);
+        // Fabric：选择 loader 版本
+        free(fabric_loader_ver);
+        fabric_loader_ver = NULL;
+        if (modloader_sel == 1 && selected_version[0]) {
+          int lcount = 0;
+          char **lvers = fabric_loader_versions(selected_version, &lcount);
+          if (lvers && lcount > 0) {
+            fabric_loader_ver = pick_fabric_loader(lvers, lcount);
+            for (int i = 0; i < lcount; i++) free(lvers[i]);
+            free(lvers);
+          }
+          if (!fabric_loader_ver) {
+            // 获取失败或用户取消 → 回退到 vanilla
+            modloader_sel = 0;
+            strncpy(modloader, "vanilla", sizeof(modloader) - 1);
+          }
+        }
         break;
       case 3: // name
         input_name(user_name, sizeof(user_name));
@@ -164,7 +187,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
             getch(); clear();
           } else {
             do_install(cstate, selected_version, selected_url, user_name,
-                       modloader, types[s.type_sel]);
+                       modloader, types[s.type_sel], fabric_loader_ver);
             goto quit;
           }
         }
@@ -178,6 +201,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
   }
 
 quit:
+  free(fabric_loader_ver);
   cleanup_install(&s);
   clear();
 }
@@ -617,42 +641,86 @@ static int retry_failed(DlTask *tasks, int count, int num_threads,
   return still_failed;
 }
 
-// 获取最新 Fabric loader 版本的 profile JSON URL
-static char *fabric_profile_url(const char *mc_version) {
+// 获取所有可用的 Fabric Loader 版本列表（返回 strdup 的字符串数组，调用者负责释放）
+static char **fabric_loader_versions(const char *mc_version, int *count_out) {
+  *count_out = 0;
   char cmd[1024];
   snprintf(cmd, sizeof(cmd),
-           "curl -sL 'https://meta.fabricmc.net/v2/versions/loader/%s'",
+           "curl -sL -o /tmp/tmcl_fabric_loaders.json "
+           "'https://meta.fabricmc.net/v2/versions/loader/%s'",
            mc_version);
-  FILE *p = popen(cmd, "r");
-  if (!p) return NULL;
-  char *resp = NULL; size_t cap = 0, len = 0; char chunk[4096];
-  while (fgets(chunk, sizeof(chunk), p)) {
-    size_t cl = strlen(chunk);
-    if (len + cl + 1 > cap) { cap = cap ? cap * 2 : 4096; resp = realloc(resp, cap); }
-    memcpy(resp + len, chunk, cl); len += cl; resp[len] = '\0';
+  if (system(cmd) != 0) return NULL;
+
+  FILE *f = fopen("/tmp/tmcl_fabric_loaders.json", "r");
+  if (!f) return NULL;
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  char *data = malloc(sz + 1);
+  if (!data) { fclose(f); return NULL; }
+  fread(data, 1, sz, f);
+  data[sz] = '\0';
+  fclose(f);
+
+  cJSON *arr = cJSON_Parse(data);
+  free(data);
+  if (!arr || !cJSON_IsArray(arr)) { cJSON_Delete(arr); return NULL; }
+
+  int total = cJSON_GetArraySize(arr);
+  if (total == 0) { cJSON_Delete(arr); return NULL; }
+
+  char **versions = malloc(total * sizeof(char *));
+  int idx = 0;
+  for (int i = 0; i < total; i++) {
+    cJSON *item = cJSON_GetArrayItem(arr, i);
+    cJSON *loader = cJSON_GetObjectItem(item, "loader");
+    if (!loader) continue;
+    cJSON *ver = cJSON_GetObjectItem(loader, "version");
+    if (!ver || !cJSON_IsString(ver)) continue;
+    versions[idx++] = strdup(ver->valuestring);
   }
-  pclose(p);
-  if (!resp) return NULL;
-  cJSON *arr = cJSON_Parse(resp); free(resp);
-  if (!arr || !cJSON_IsArray(arr) || cJSON_GetArraySize(arr) == 0) {
-    cJSON_Delete(arr); return NULL;
-  }
-  cJSON *first = cJSON_GetArrayItem(arr, 0);  // 最新 loader 在数组最前面
-  cJSON *loader = cJSON_GetObjectItem(first, "loader");
-  if (!loader) { cJSON_Delete(arr); return NULL; }
-  cJSON *ver = cJSON_GetObjectItem(loader, "version");
-  if (!ver || !cJSON_IsString(ver)) { cJSON_Delete(arr); return NULL; }
-  char *result = NULL;
-  asprintf(&result,
-           "https://meta.fabricmc.net/v2/versions/loader/%s/%s/profile/json",
-           mc_version, ver->valuestring);
   cJSON_Delete(arr);
-  return result;
+  *count_out = idx;
+  return versions;
+}
+
+// Fabric Loader 版本选择器（ncurses UI）
+static char *pick_fabric_loader(char **versions, int count) {
+  int sel = 0, scroll = 0;
+  int row, col;
+  while (1) {
+    clear();
+    getmaxyx(stdscr, row, col);
+    mvprintw(2, 4, "Select Fabric Loader version (%d available):", count);
+    int max_disp = row - 6;
+    if (sel < scroll) scroll = sel;
+    if (sel >= scroll + max_disp) scroll = sel - max_disp + 1;
+    if (scroll < 0) scroll = 0;
+
+    for (int i = scroll; i < count && i < scroll + max_disp; i++) {
+      if (i == sel) attron(A_REVERSE);
+      mvprintw(4 + i - scroll, 6, "%s", versions[i]);
+      if (i == sel) attroff(A_REVERSE);
+    }
+    if (scroll > 0) mvprintw(3, 6, "... more above ...");
+    if (scroll + max_disp < count)
+      mvprintw(4 + max_disp, 6, "... more below ...");
+    mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
+
+    int c = getch();
+    if (c == 'j' && sel < count - 1) sel++;
+    if (c == 'k' && sel > 0) sel--;
+    if (c == '\n') break;
+    if (c == 'q') { clear(); return NULL; }
+  }
+  clear();
+  return strdup(versions[sel]);
 }
 
 static void do_install(ConfigState *cstate, const char *version_id,
                        const char *version_url, const char *custom_name,
-                       const char *modloader, const char *type) {
+                       const char *modloader, const char *type,
+                       const char *fabric_loader_ver) {
   struct sigaction sa = {.sa_handler = on_sigint, .sa_flags = 0};
   sigemptyset(&sa.sa_mask);
   sigaction(SIGINT, &sa, NULL);
@@ -663,14 +731,16 @@ static void do_install(ConfigState *cstate, const char *version_id,
   if (num_threads < 1) num_threads = 96;
   char *mcdir = cstate->items[2].value;
 
-  // Fabric 安装：获取 Fabric profile JSON URL
+  // Fabric 安装：使用用户选择的 loader 版本构建 profile JSON URL
   char *fabric_url = NULL;
   if (strcmp(modloader, "fabric") == 0) {
-    fabric_url = fabric_profile_url(version_id);
-    if (!fabric_url) {
-      printf("ERROR: Failed to get Fabric loader for %s\n", version_id);
+    if (!fabric_loader_ver || !fabric_loader_ver[0]) {
+      printf("ERROR: No Fabric loader version selected for %s\n", version_id);
       goto done;
     }
+    asprintf(&fabric_url,
+             "https://meta.fabricmc.net/v2/versions/loader/%s/%s/profile/json",
+             version_id, fabric_loader_ver);
   }
 
   printf("\n=== Installing %s (%s) ===\n", custom_name, version_id);
@@ -693,27 +763,10 @@ static void do_install(ConfigState *cstate, const char *version_id,
   // 对于 Fabric：下载 Fabric profile JSON，合并到原版 JSON 中，
   // 生成自包含的 JSON（CMCL 风格：无 inheritsFrom，mainClass 直接指向 Fabric）
   if (strcmp(modloader, "fabric") == 0) {
-    // 从 fabric_url 中提取 loader 版本（URL 格式: .../<mc>/<loader>/profile/json）
-    char loader_ver[64] = {0};
-    {
-      char *url_dup = strdup(fabric_url);
-      if (url_dup) {
-        // 去掉尾部 "/profile/json"
-        char *last_slash = strrchr(url_dup, '/');
-        if (last_slash) {
-          *last_slash = '\0';
-          last_slash = strrchr(url_dup, '/');
-          if (last_slash) {
-            *last_slash = '\0';  // 去掉 "/<loader>"
-            last_slash = strrchr(url_dup, '/');
-            if (last_slash) {
-              snprintf(loader_ver, sizeof(loader_ver), "%s", last_slash + 1);
-            }
-          }
-        }
-        free(url_dup);
-      }
-    }
+    // loader 版本已由用户在安装前选择
+    char loader_ver[64];
+    snprintf(loader_ver, sizeof(loader_ver), "%s",
+             fabric_loader_ver ? fabric_loader_ver : "unknown");
 
     // 下载 Fabric profile JSON 到内存
     char cmd[1280];
