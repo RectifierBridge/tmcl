@@ -29,6 +29,30 @@ static void do_install(ConfigState *cstate, const char *version_id,
                        const char *version_url, const char *custom_name,
                        const char *modloader, const char *type);
 
+// ======================== Mod Loader 选择器 ========================
+static int pick_modloader(int cur) {
+  const char *opts[] = {"vanilla", "fabric", "forge", "neoforge"};
+  int sel = cur, row, col;
+  while (1) {
+    clear();
+    getmaxyx(stdscr, row, col);
+    mvprintw(2, 4, "Select mod loader:");
+    for (int i = 0; i < 4; i++) {
+      if (i == sel) attron(A_REVERSE);
+      mvprintw(4 + i, 6, "%s", opts[i]);
+      if (i == sel) attroff(A_REVERSE);
+    }
+    mvprintw(10, 4, "j/k: move  Enter: confirm  q: cancel");
+    int c = getch();
+    if (c == 'j' && sel < 3) sel++;
+    if (c == 'k' && sel > 0) sel--;
+    if (c == '\n') break;
+    if (c == 'q') { sel = cur; break; }
+  }
+  clear();
+  return sel;
+}
+
 // ======================== 安装页面主函数 ========================
 void install_page(VersionState *vstate, ConfigState *cstate) {
   InstallState s;
@@ -37,8 +61,10 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
   s.type_sel = 0;               // 0=release, 1=snapshot, 2=old_beta, 3=old_alpha
 
   const char *types[] = {"release", "snapshot", "old_beta", "old_alpha"};
+  const char *modloaders[] = {"vanilla", "fabric", "forge", "neoforge"};
   char user_name[64] = {0};
   char modloader[32] = "vanilla";
+  int modloader_sel = 0;
   char selected_version[64] = {0};
   char selected_url[512] = {0};
 
@@ -121,11 +147,34 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
       case 2: // name
         input_name(user_name, sizeof(user_name));
         break;
+      case 3: // mod loader
+        modloader_sel = pick_modloader(modloader_sel);
+        strncpy(modloader, modloaders[modloader_sel], sizeof(modloader) - 1);
+        if (modloader_sel == 0) {
+          // vanilla: 恢复自动生成的 name
+          if (selected_version[0]) {
+            snprintf(user_name, sizeof(user_name), "tmcl_%.54s",
+                     selected_version);
+          }
+        } else if (selected_version[0]) {
+          if (modloader_sel > 0)
+            snprintf(user_name, sizeof(user_name), "tmcl_%s-%.48s",
+                     modloader, selected_version);
+        }
+        break;
       case 4: // start installation
         if (selected_version[0] && selected_url[0]) {
-          do_install(cstate, selected_version, selected_url, user_name,
-                     modloader, types[s.type_sel]);
-          goto quit;
+          if (modloader_sel >= 2) { // forge / neoforge — coming soon
+            clear();
+            mvprintw(5, 4, "%s installation", modloaders[modloader_sel]);
+            mvprintw(7, 4, "Coming soon!");
+            mvprintw(9, 4, "Press any key to return...");
+            getch(); clear();
+          } else {
+            do_install(cstate, selected_version, selected_url, user_name,
+                       modloader, types[s.type_sel]);
+            goto quit;
+          }
         }
         break;
       }
@@ -564,6 +613,37 @@ static int retry_failed(DlTask *tasks, int count, int num_threads,
   return still_failed;
 }
 
+// 获取最新 Fabric loader 版本的 profile JSON URL
+static char *fabric_profile_url(const char *mc_version) {
+  char cmd[1024];
+  snprintf(cmd, sizeof(cmd),
+           "curl -sL 'https://meta.fabricmc.net/v2/versions/loader/%s'",
+           mc_version);
+  FILE *p = popen(cmd, "r");
+  if (!p) return NULL;
+  char *resp = NULL; size_t cap = 0, len = 0; char chunk[4096];
+  while (fgets(chunk, sizeof(chunk), p)) {
+    size_t cl = strlen(chunk);
+    if (len + cl + 1 > cap) { cap = cap ? cap * 2 : 4096; resp = realloc(resp, cap); }
+    memcpy(resp + len, chunk, cl); len += cl; resp[len] = '\0';
+  }
+  pclose(p);
+  if (!resp) return NULL;
+  cJSON *arr = cJSON_Parse(resp); free(resp);
+  if (!arr || !cJSON_IsArray(arr) || cJSON_GetArraySize(arr) == 0) {
+    cJSON_Delete(arr); return NULL;
+  }
+  cJSON *last = cJSON_GetArrayItem(arr, cJSON_GetArraySize(arr) - 1);
+  cJSON *ver = cJSON_GetObjectItem(last, "version");
+  if (!ver || !cJSON_IsString(ver)) { cJSON_Delete(arr); return NULL; }
+  char *result = NULL;
+  asprintf(&result,
+           "https://meta.fabricmc.net/v2/versions/loader/%s/%s/profile/json",
+           mc_version, ver->valuestring);
+  cJSON_Delete(arr);
+  return result;
+}
+
 static void do_install(ConfigState *cstate, const char *version_id,
                        const char *version_url, const char *custom_name,
                        const char *modloader, const char *type) {
@@ -577,6 +657,16 @@ static void do_install(ConfigState *cstate, const char *version_id,
   if (num_threads < 1) num_threads = 96;
   char *mcdir = cstate->items[2].value;
 
+  // Fabric 安装：获取 Fabric profile JSON URL
+  char *fabric_url = NULL;
+  if (strcmp(modloader, "fabric") == 0) {
+    fabric_url = fabric_profile_url(version_id);
+    if (!fabric_url) {
+      printf("ERROR: Failed to get Fabric loader for %s\n", version_id);
+      goto done;
+    }
+  }
+
   printf("\n=== Installing %s (%s) ===\n", custom_name, version_id);
   printf("    Threads: 8 (libs) / %d (assets)\n\n", num_threads);
 
@@ -589,9 +679,62 @@ static void do_install(ConfigState *cstate, const char *version_id,
   char json_path[600];
   snprintf(json_path, sizeof(json_path), "%s/%s.json", version_dir,
            custom_name);
-  if (dl_one(version_url, json_path, "version JSON") != 0) {
+  const char *dl_url = fabric_url ? fabric_url : version_url;
+  if (dl_one(dl_url, json_path, "version JSON") != 0) {
     printf("\nFailed to download version JSON. Aborting.\n");
-    goto done;
+    free(fabric_url); goto done;
+  }
+  free(fabric_url);
+
+  // 对于 Fabric，还需下载父版本（vanilla）的 JSON
+  if (strcmp(modloader, "fabric") == 0) {
+    cJSON *main_j = NULL;
+    FILE *mjf = fopen(json_path, "r");
+    if (mjf) { fseek(mjf,0,SEEK_END); long s=ftell(mjf); fseek(mjf,0,SEEK_SET);
+      char *d=malloc(s+1); fread(d,1,s,mjf); d[s]=0; fclose(mjf);
+      main_j=cJSON_Parse(d); free(d); }
+    if (main_j) {
+      cJSON *inh = cJSON_GetObjectItem(main_j, "inheritsFrom");
+      if (inh && cJSON_IsString(inh)) {
+        char parent_json_url[512];
+        snprintf(parent_json_url, sizeof(parent_json_url),
+                 "https://piston-meta.mojang.com/v1/packages/"
+                 // 需要从 manifest 获取完整 URL，简化处理：直接用已知格式
+                 "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+                 );
+        // 简化：从已缓存的 manifest 查找 URL
+        char cmd[1280];
+        snprintf(cmd, sizeof(cmd),
+                 "curl -sL "
+                 "'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' "
+                 "| python3 -c \"import sys,json; d=json.load(sys.stdin); "
+                 "[print(v['url']) for v in d['versions'] if "
+                 "v['id']=='%s']\" 2>/dev/null",
+                 inh->valuestring);
+        FILE *pp = popen(cmd, "r");
+        if (pp) {
+          char p_url[512] = {0};
+          fgets(p_url, sizeof(p_url), pp);
+          pclose(pp);
+          if (p_url[0]) {
+            p_url[strcspn(p_url, "\n")] = '\0';
+            char parent_path[600];
+            snprintf(parent_path, sizeof(parent_path),
+                     "%s/versions/%s/%s.json", mcdir, inh->valuestring,
+                     inh->valuestring);
+            char dcmd[1200];
+            snprintf(dcmd, sizeof(dcmd),
+                     "mkdir -p \"%s/versions/%s\"", mcdir, inh->valuestring);
+            system(dcmd);
+            char plabel[300];
+            snprintf(plabel, sizeof(plabel), "vanilla parent %s.json",
+                     inh->valuestring);
+            dl_one(p_url, parent_path, plabel);
+          }
+        }
+      }
+      cJSON_Delete(main_j);
+    }
   }
 
   // 2) 解析版本 JSON
