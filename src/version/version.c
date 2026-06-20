@@ -111,6 +111,7 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
           cJSON *game_type = cJSON_GetObjectItem(json, "type");
           cJSON *mod_loader_forge = cJSON_GetObjectItem(json, "forge");
           cJSON *mod_loader_fabric = cJSON_GetObjectItem(json, "fabric");
+          cJSON *mod_loader_neoforge = cJSON_GetObjectItem(json, "neoforge");
 
           if (game_type && game_type->valuestring) {
             // game type
@@ -149,9 +150,15 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
                     '\0'; // 补充缺失的终止符
               }
             }
-            // modloader 检查 fabric / forge
+            // modloader 检查 fabric / forge / neoforge
             if (mod_loader_fabric) {
               strncpy(state->versions[count].modloader, "fabric",
+                      sizeof(state->versions[count].modloader) - 1);
+              state->versions[count]
+                  .modloader[sizeof(state->versions[count].modloader) - 1] =
+                  '\0';
+            } else if (mod_loader_neoforge) {
+              strncpy(state->versions[count].modloader, "neoforge",
                       sizeof(state->versions[count].modloader) - 1);
               state->versions[count]
                   .modloader[sizeof(state->versions[count].modloader) - 1] =
@@ -210,6 +217,11 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
               }
             }
 
+            // 初始化版本级覆盖字段（之后由 per-version config 覆盖）
+            state->versions[count].java_override[0] = '\0';
+            state->versions[count].memory_override[0] = '\0';
+            state->versions[count].jvm_args_extra[0] = '\0';
+
             count++;
           }
           cJSON_Delete(json); // 释放 cJSON 对象
@@ -232,7 +244,61 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
     }
   }
 
+  // 读取每个版本的独立配置（<version_dir>/tmcl.json）
+  for (int i = 0; i < count; i++) {
+    char vc_path[512];
+    snprintf(vc_path, sizeof(vc_path), "%s/versions/%s/tmcl.json", gameDir,
+             state->versions[i].name);
+    FILE *vcf = fopen(vc_path, "r");
+    if (!vcf) continue;
+    fseek(vcf, 0, SEEK_END);
+    long vsz = ftell(vcf);
+    fseek(vcf, 0, SEEK_SET);
+    char *vdata = malloc(vsz + 1);
+    if (!vdata) { fclose(vcf); continue; }
+    fread(vdata, 1, vsz, vcf);
+    vdata[vsz] = '\0';
+    fclose(vcf);
+    cJSON *vc = cJSON_Parse(vdata);
+    free(vdata);
+    if (!vc) continue;
+    cJSON *j;
+    j = cJSON_GetObjectItem(vc, "java_path");
+    if (j && cJSON_IsString(j))
+      strncpy(state->versions[i].java_override, j->valuestring, 255);
+    j = cJSON_GetObjectItem(vc, "memory");
+    if (j && cJSON_IsString(j))
+      strncpy(state->versions[i].memory_override, j->valuestring, 15);
+    j = cJSON_GetObjectItem(vc, "jvm_args");
+    if (j && cJSON_IsString(j))
+      strncpy(state->versions[i].jvm_args_extra, j->valuestring, 511);
+    cJSON_Delete(vc);
+  }
+
   state->version_count = count;
+}
+
+// 保存版本独立配置
+static void save_version_config(VersionState *state, int index,
+                                ConfigState *cstate) {
+  char vc_path[512];
+  snprintf(vc_path, sizeof(vc_path), "%s/versions/%s/tmcl.json",
+           cstate->items[2].value, state->versions[index].name);
+  cJSON *root = cJSON_CreateObject();
+  if (state->versions[index].java_override[0])
+    cJSON_AddStringToObject(root, "java_path",
+                            state->versions[index].java_override);
+  if (state->versions[index].memory_override[0])
+    cJSON_AddStringToObject(root, "memory",
+                            state->versions[index].memory_override);
+  if (state->versions[index].jvm_args_extra[0])
+    cJSON_AddStringToObject(root, "jvm_args",
+                            state->versions[index].jvm_args_extra);
+  char *js = cJSON_Print(root);
+  FILE *f = fopen(vc_path, "w");
+  if (f) { fputs(js, f); fclose(f); }
+  free(js);
+  cJSON_Delete(root);
 }
 
 // ======================== 启动辅助函数 ========================
@@ -613,9 +679,17 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     }
   }
 
-  // ---- 内存（auto 时自动刷新）----
+  // ---- 内存（版本级覆盖优先）----
   char mem_arg[80];
-  int mem_mb = config_get_memory_mb(ConfigState);
+  int mem_mb;
+  if (state->versions[idx].memory_override[0]) {
+    if (strcmp(state->versions[idx].memory_override, "auto") == 0)
+      mem_mb = config_get_memory_mb(ConfigState);
+    else
+      mem_mb = atoi(state->versions[idx].memory_override);
+  } else {
+    mem_mb = config_get_memory_mb(ConfigState);
+  }
   snprintf(mem_arg, sizeof(mem_arg), "-Xmx%dm", mem_mb);
 
   // ---- 构建 args ----
@@ -624,15 +698,21 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   char **tofree = malloc(300 * sizeof(char *));
   int fc = 0;
 
-  // 使用版本匹配的 Java（如果有指定 majorVersion）
-  int jmajor = state->versions[idx].javaMajor;
+  // Java 路径（版本级覆盖 > javaMajor 检测 > 全局默认）
   char java_bin[512];
-  if (jmajor > 0 && find_java_for_version(jmajor, java_bin, sizeof(java_bin))) {
-    args[ac++] = strdup(java_bin);
+  if (state->versions[idx].java_override[0]) {
+    args[ac++] = strdup(state->versions[idx].java_override);
     tofree[fc++] = args[ac - 1];
-    printf("  Java: %s (required major version: %d)\n", java_bin, jmajor);
+    printf("  Java: %s (version override)\n", state->versions[idx].java_override);
   } else {
-    args[ac++] = ConfigState->items[0].value; // 使用配置的默认 java
+    int jmajor = state->versions[idx].javaMajor;
+    if (jmajor > 0 && find_java_for_version(jmajor, java_bin, sizeof(java_bin))) {
+      args[ac++] = strdup(java_bin);
+      tofree[fc++] = args[ac - 1];
+      printf("  Java: %s (required major version: %d)\n", java_bin, jmajor);
+    } else {
+      args[ac++] = ConfigState->items[0].value;
+    }
   }
   args[ac++] = mem_arg;
 
@@ -659,6 +739,18 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
       args[ac++] = injector_arg;
       tofree[fc++] = injector_arg;
       args[ac++] = "-Dauthlibinjector.side=client";
+    }
+
+    // 版本级追加 JVM 参数
+    if (state->versions[idx].jvm_args_extra[0] && ac < 300 - 16) {
+      char *dup = strdup(state->versions[idx].jvm_args_extra);
+      char *sp, *tok = strtok_r(dup, " ", &sp);
+      while (tok) {
+        args[ac++] = strdup(tok);
+        tofree[fc++] = args[ac - 1];
+        tok = strtok_r(NULL, " ", &sp);
+      }
+      free(dup);
     }
 
     // 确保 -cp 已在 JVM 参数末尾（JSON 中通常有，但也做一次兜底）
@@ -695,6 +787,18 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
       args[ac++] = injector_arg;
       tofree[fc++] = injector_arg;
       args[ac++] = "-Dauthlibinjector.side=client";
+    }
+
+    // 版本级追加 JVM 参数
+    if (state->versions[idx].jvm_args_extra[0] && ac < 300 - 16) {
+      char *dup = strdup(state->versions[idx].jvm_args_extra);
+      char *sp, *tok = strtok_r(dup, " ", &sp);
+      while (tok) {
+        args[ac++] = strdup(tok);
+        tofree[fc++] = args[ac - 1];
+        tok = strtok_r(NULL, " ", &sp);
+      }
+      free(dup);
     }
 
     args[ac++] = "-Djava.library.path=";
@@ -857,6 +961,292 @@ void delete_version(VersionState *state, int index, ConfigState *ConfigState) {
   return;
 }
 
+// ======================== Check & Complete ========================
+static void check_complete(VersionState *state, int index,
+                           ConfigState *ConfigState) {
+  endwin();
+  printf("\n=== Check & Complete: %s ===\n\n", state->versions[index].name);
+
+  char *mcdir = ConfigState->items[2].value;
+  char json_path[512];
+  snprintf(json_path, sizeof(json_path), "%s/versions/%s/%s.json", mcdir,
+           state->versions[index].name, state->versions[index].name);
+
+  FILE *jf = fopen(json_path, "r");
+  if (!jf) { printf("Failed to open version JSON.\n"); goto cc_done; }
+  fseek(jf, 0, SEEK_END);
+  long jsz = ftell(jf);
+  fseek(jf, 0, SEEK_SET);
+  char *jdata = malloc(jsz + 1);
+  if (!jdata) { fclose(jf); goto cc_done; }
+  fread(jdata, 1, jsz, jf);
+  jdata[jsz] = '\0';
+  fclose(jf);
+
+  cJSON *root = cJSON_Parse(jdata);
+  free(jdata);
+  if (!root) { printf("Failed to parse version JSON.\n"); goto cc_done; }
+
+  cJSON *libraries = cJSON_GetObjectItem(root, "libraries");
+  int total = 0, ok = 0, missing = 0, failed = 0;
+  if (libraries && cJSON_IsArray(libraries)) {
+    cJSON *lib;
+    cJSON_ArrayForEach(lib, libraries) {
+      // 简单的 rules 检查（复用已有逻辑）
+      cJSON *rules = cJSON_GetObjectItem(lib, "rules");
+      if (rules) {
+        cJSON *rule = cJSON_GetArrayItem(rules, 0);
+        if (rule) {
+          cJSON *action = cJSON_GetObjectItem(rule, "action");
+          cJSON *os = cJSON_GetObjectItem(rule, "os");
+          if (action && os) {
+            cJSON *os_name = cJSON_GetObjectItem(os, "name");
+            if (os_name && cJSON_IsString(os_name) &&
+                strcmp(os_name->valuestring, "linux") != 0)
+              continue;
+          }
+        }
+      }
+      total++;
+
+      // 获取路径
+      char lib_path[512] = {0};
+      cJSON *dl_info = cJSON_GetObjectItem(lib, "downloads");
+      if (dl_info) {
+        cJSON *artifact = cJSON_GetObjectItem(dl_info, "artifact");
+        if (artifact) {
+          cJSON *path = cJSON_GetObjectItem(artifact, "path");
+          if (path && cJSON_IsString(path))
+            snprintf(lib_path, sizeof(lib_path), "%s/libraries/%s", mcdir,
+                     path->valuestring);
+        }
+      }
+      if (!lib_path[0]) {
+        cJSON *name = cJSON_GetObjectItem(lib, "name");
+        if (name && cJSON_IsString(name)) {
+          char *ns = strdup(name->valuestring);
+          char *sp;
+          char *group = strtok_r(ns, ":", &sp);
+          char *artifact = strtok_r(NULL, ":", &sp);
+          char *version = strtok_r(NULL, ":", &sp);
+          if (group && artifact && version) {
+            char gp[256];
+            snprintf(gp, sizeof(gp), "%s", group);
+            for (char *p = gp; *p; p++)
+              if (*p == '.') *p = '/';
+            snprintf(lib_path, sizeof(lib_path),
+                     "%s/libraries/%s/%s/%s/%s-%s.jar", mcdir, gp, artifact,
+                     version, artifact, version);
+          }
+          free(ns);
+        }
+      }
+
+      if (!lib_path[0]) continue;
+
+      // 检查文件
+      if (access(lib_path, F_OK) == 0) {
+        ok++;
+      } else {
+        // 下载
+        printf("  Downloading: %s\n", lib_path);
+        char url[1024];
+        snprintf(url, sizeof(url), "https://libraries.minecraft.net/%s",
+                 lib_path + strlen(mcdir) + strlen("/libraries/"));
+        char dcmd[2100];
+        snprintf(dcmd, sizeof(dcmd),
+                 "mkdir -p \"$(dirname '%s')\" && "
+                 "curl -s -L --connect-timeout 15 --max-time 120 -o \"%s\" \"%s\"",
+                 lib_path, lib_path, url);
+        if (system(dcmd) == 0 && access(lib_path, F_OK) == 0) {
+          printf("    \033[32mOK\033[0m\n");
+          missing++;
+        } else {
+          printf("    \033[31mFAIL\033[0m\n");
+          failed++;
+        }
+      }
+    }
+  }
+  // ---- 检查 assets ----
+  cJSON *assetIndex = cJSON_GetObjectItem(root, "assetIndex");
+  if (assetIndex) {
+    cJSON *ai_id = cJSON_GetObjectItem(assetIndex, "id");
+    if (ai_id && cJSON_IsString(ai_id)) {
+      char ai_path[512];
+      snprintf(ai_path, sizeof(ai_path), "%s/assets/indexes/%s.json", mcdir,
+               ai_id->valuestring);
+      FILE *aif = fopen(ai_path, "r");
+      if (aif) {
+        fseek(aif, 0, SEEK_END);
+        long asz = ftell(aif);
+        fseek(aif, 0, SEEK_SET);
+        char *adata = malloc(asz + 1);
+        if (adata) { fread(adata, 1, asz, aif); adata[asz] = '\0'; }
+        fclose(aif);
+        cJSON *ai_root = adata ? cJSON_Parse(adata) : NULL;
+        free(adata);
+        if (ai_root) {
+          cJSON *objects = cJSON_GetObjectItem(ai_root, "objects");
+          if (objects && cJSON_IsObject(objects)) {
+            int a_total = 0, a_ok = 0, a_dl = 0, a_fail = 0;
+            cJSON *obj;
+            cJSON_ArrayForEach(obj, objects) {
+              a_total++;
+              cJSON *hash = cJSON_GetObjectItem(obj, "hash");
+              if (!hash || !cJSON_IsString(hash)) continue;
+              char first2[3] = {hash->valuestring[0], hash->valuestring[1],
+                                '\0'};
+              char obj_path[600];
+              snprintf(obj_path, sizeof(obj_path),
+                       "%s/assets/objects/%s/%s", mcdir, first2,
+                       hash->valuestring);
+              if (access(obj_path, F_OK) == 0) { a_ok++; continue; }
+              printf("  Asset: %s\n", obj->string);
+              char dcmd[1280];
+              snprintf(dcmd, sizeof(dcmd),
+                       "mkdir -p \"$(dirname '%s')\" && "
+                       "curl -s -L --connect-timeout 15 --max-time 120 -o "
+                       "\"%s\" "
+                       "\"https://resources.download.minecraft.net/%s/%s\"",
+                       obj_path, obj_path, first2, hash->valuestring);
+              if (system(dcmd) == 0 && access(obj_path, F_OK) == 0) {
+                printf("    \033[32mOK\033[0m\n");
+                a_dl++;
+              } else {
+                printf("    \033[31mFAIL\033[0m\n");
+                a_fail++;
+              }
+            }
+            printf("\n  Assets: %d checked | %d OK | %d downloaded | %d failed\n",
+                   a_total, a_ok, a_dl, a_fail);
+            total += a_total; ok += a_ok; missing += a_dl; failed += a_fail;
+          }
+          cJSON_Delete(ai_root);
+        }
+      }
+    }
+  }
+  cJSON_Delete(root);
+
+  printf("\n--- Total ---\n");
+  printf("Checked: %d | OK: %d | Downloaded: %d | Failed: %d\n",
+         total, ok, missing, failed);
+
+cc_done:
+  printf("\nPress Enter to return...\n");
+  while (getchar() != '\n' && !feof(stdin)) {}
+}
+
+// ======================== 版本配置子页面 ========================
+void version_config_page(VersionState *state, int index,
+                         ConfigState *ConfigState) {
+  VersionInfo *v = &state->versions[index];
+  int sel = 0; // 0=java, 1=memory, 2=jvm, 3=check, 4=rename, 5=delete
+  int row, col;
+
+  while (1) {
+    clear();
+    getmaxyx(stdscr, row, col);
+    mvprintw(0, 0, "[V]ersion [C]onfig ");
+    attron(A_REVERSE);
+    printw("Version Config: %s", v->name);
+    attroff(A_REVERSE);
+    mvprintw(0, col - 15, "tap [q] to quit");
+
+    // 表头
+    mvprintw(2, 3, "Key              Value");
+    mvprintw(3, 3, "---              -----");
+
+    // 配置项（紧凑，无空行）
+    const char *labels[] = {"Java", "Memory", "JVM Args"};
+    char buf[3][512];
+    snprintf(buf[0], sizeof(buf[0]), "%s",
+             v->java_override[0] ? v->java_override : "(global)");
+    snprintf(buf[1], sizeof(buf[1]), "%s",
+             v->memory_override[0] ? v->memory_override : "(global)");
+    snprintf(buf[2], sizeof(buf[2]), "%s",
+             v->jvm_args_extra[0] ? v->jvm_args_extra : "(empty)");
+
+    for (int i = 0; i < 3; i++) {
+      if (i == sel) attron(A_REVERSE);
+      mvprintw(4 + i, 2, " %-15s  %s", labels[i], buf[i]);
+      if (i == sel) attroff(A_REVERSE);
+    }
+
+    // 操作按钮
+    const char *actions[] = {"check & complete", "rename", "delete"};
+    for (int i = 0; i < 3; i++) {
+      if (i + 3 == sel) attron(A_REVERSE);
+      mvprintw(8 + i, 3, "[ %s ]", actions[i]);
+      if (i + 3 == sel) attroff(A_REVERSE);
+    }
+
+    int ch = getch();
+    switch (ch) {
+    case 'q': goto done;
+    case 'j':
+      if (sel < 5) sel++;
+      break;
+    case 'k':
+      if (sel > 0) sel--;
+      break;
+    case '\n':
+      switch (sel) {
+      case 0: { // Java
+        echo(); curs_set(1); clear();
+        mvprintw(3, 4, "Java path (empty = global):");
+        mvprintw(5, 4, "> ");
+        char in[256] = {0};
+        getnstr(in, sizeof(in) - 1);
+        strncpy(v->java_override, in, sizeof(v->java_override) - 1);
+        v->java_override[sizeof(v->java_override) - 1] = '\0';
+        noecho(); curs_set(0); clear();
+        save_version_config(state, index, ConfigState);
+        break;
+      }
+      case 1: { // Memory
+        echo(); curs_set(1); clear();
+        mvprintw(3, 4, "Memory (empty = global, or 'auto'):");
+        mvprintw(5, 4, "> ");
+        char in[16] = {0};
+        getnstr(in, sizeof(in) - 1);
+        strncpy(v->memory_override, in, sizeof(v->memory_override) - 1);
+        v->memory_override[sizeof(v->memory_override) - 1] = '\0';
+        noecho(); curs_set(0); clear();
+        save_version_config(state, index, ConfigState);
+        break;
+      }
+      case 2: { // JVM args
+        echo(); curs_set(1); clear();
+        mvprintw(3, 4, "Extra JVM args (empty = none):");
+        mvprintw(5, 4, "> ");
+        char in[512] = {0};
+        getnstr(in, sizeof(in) - 1);
+        strncpy(v->jvm_args_extra, in, sizeof(v->jvm_args_extra) - 1);
+        v->jvm_args_extra[sizeof(v->jvm_args_extra) - 1] = '\0';
+        noecho(); curs_set(0); clear();
+        save_version_config(state, index, ConfigState);
+        break;
+      }
+      case 3: // check & complete
+        check_complete(state, index, ConfigState);
+        break;
+      case 4: // rename
+        rename_version(state, index);
+        save_version_config(state, index, ConfigState);
+        break;
+      case 5: // delete
+        delete_version(state, index, ConfigState);
+        goto done;
+      }
+      break;
+    }
+  }
+done:
+  clear();
+}
+
 // 版本页面主函数
 void version_page(int ch, int *middlep, VersionState *state,
                   ConfigState *ConfigState) {
@@ -883,9 +1273,9 @@ void version_page(int ch, int *middlep, VersionState *state,
       }
     }
     break;
-  case 'b': // begin 操作 - 直接执行
+  case 'b': // begin — 直接执行并将光标移到 begin
     begin_version(state, ConfigState);
-    *middlep = 0; // 移动光标到 start
+    *middlep = 0;
     break;
   case 'm':
     *middlep = 1;
@@ -895,23 +1285,19 @@ void version_page(int ch, int *middlep, VersionState *state,
     *middlep = 2;
     pin_version(state, ConfigState);
     break;
-  case 'r': // rename 操作 - 直接执行
-    rename_version(state, state->selected_version);
-    *middlep = 3; // 移动光标到 rename
+  case 'c': // config — 直接执行并将光标移到 config
+    version_config_page(state, state->selected_version, ConfigState);
+    *middlep = 3;
     break;
-  case 'n': // new 操作 - 直接执行
+  case 'n': // new — 直接执行并将光标移到 new
     new_version(state, ConfigState);
-    *middlep = 4; // 移动光标到 new
-    break;
-  case 'd': // delete 操作 - 直接执行
-    delete_version(state, state->selected_version, ConfigState);
-    *middlep = 5; // 移动光标到 delete
+    *middlep = 4;
     break;
   case 'h':                        // 在操作间向左移动
-    *middlep = (*middlep + 5) % 6; // 循环向左（5个操作）
+    *middlep = (*middlep + 4) % 5;
     break;
   case 'l':                        // 在操作间向右移动
-    *middlep = (*middlep + 1) % 6; // 循环向右（5个操作）
+    *middlep = (*middlep + 1) % 5;
     break;
   case '\n': // 回车键执行当前操作
     switch (*middlep) {
@@ -924,14 +1310,11 @@ void version_page(int ch, int *middlep, VersionState *state,
     case 2: // pin
       pin_version(state, ConfigState);
       break;
-    case 3: // rename
-      rename_version(state, state->selected_version);
+    case 3: // config
+      version_config_page(state, state->selected_version, ConfigState);
       break;
     case 4: // new
       new_version(state, ConfigState);
-      break;
-    case 5: // delete
-      delete_version(state, state->selected_version, ConfigState);
       break;
     }
     break;
@@ -1151,40 +1534,33 @@ void bottom_bar(int *middlep) {
     attron(A_REVERSE);
     mvprintw(row - 1, 0, "[b]egin");
     attroff(A_REVERSE);
-    printw(" [m]od [p]in [r]ename [n]ew [d]elete");
+    printw(" [m]od [p]in [c]onfig [n]ew");
     break;
   case 1:
     mvprintw(row - 1, 0, "[b]egin ");
     attron(A_REVERSE);
     printw("[m]od");
     attroff(A_REVERSE);
-    printw(" [p]in [r]ename [n]ew [d]elete");
+    printw(" [p]in [c]onfig [n]ew");
     break;
   case 2:
     mvprintw(row - 1, 0, "[b]egin [m]od ");
     attron(A_REVERSE);
     printw("[p]in");
     attroff(A_REVERSE);
-    printw(" [r]ename [n]ew [d]elete");
+    printw(" [c]onfig [n]ew");
     break;
   case 3:
     mvprintw(row - 1, 0, "[b]egin [m]od [p]in ");
     attron(A_REVERSE);
-    printw("[r]ename");
+    printw("[c]onfig");
     attroff(A_REVERSE);
-    printw(" [n]ew [d]elete");
+    printw(" [n]ew");
     break;
   case 4:
-    mvprintw(row - 1, 0, "[b]egin [m]od [p]in [r]ename ");
+    mvprintw(row - 1, 0, "[b]egin [m]od [p]in [c]onfig ");
     attron(A_REVERSE);
     printw("[n]ew");
-    attroff(A_REVERSE);
-    printw(" [d]elete");
-    break;
-  case 5:
-    mvprintw(row - 1, 0, "[b]egin [m]od [p]in [r]ename [n]ew ");
-    attron(A_REVERSE);
-    printw("[d]elete");
     attroff(A_REVERSE);
     break;
   }

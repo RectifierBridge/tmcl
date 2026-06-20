@@ -14,6 +14,9 @@ typedef struct {
                         // "cpw.mods.modlauncher.Launcher"
   char inheritsFrom[64]; // 继承的父版本名（forge/fabric 常用）
   int javaMajor;         // 所需的 Java 主版本号，0 表示使用默认
+  char java_override[256];  // 版本级 Java 路径覆盖
+  char memory_override[16]; // 版本级内存覆盖
+  char jvm_args_extra[512]; // 版本级追加 JVM 参数
 } VersionInfo;
 
 // 版本页面状态
@@ -35,5 +38,6 @@ void start_version(VersionState *state, int index);
 void new_version(VersionState *state, ConfigState *ConfigState);
 void delete_version(VersionState *state, int index, ConfigState *ConfigState);
 void begin_version(VersionState *state, ConfigState *ConfigState);
+void version_config_page(VersionState *state, int index, ConfigState *ConfigState);
 
 #endif

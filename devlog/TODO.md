@@ -1,45 +1,44 @@
 # TODO — 开发待办
 
-## 当前阶段: P1 — 离线账户 CRUD ✅
+## V1 — Version Config 子页面 ✅
 
-- [x] account_init: 从 ~/.tmcl/accounts.json 加载，空列表则无账户
-- [x] account_page: Enter 键触发 [n]ew / [d]elete 操作
-- [x] 新建离线账户: popup 输入用户名 → 自动生成 UUID v3
-- [x] 删除账户: 确认弹窗 → 从列表移除 → 持久化
-- [x] 选择账户: 标记 selected → 持久化
-- [x] account_write: 保存到 accounts.json
-- [x] begin_version: 读取选中账户的 username/uuid/token
+详见 `docs/specs/version-config.md`
 
-## 后续阶段
+- [x] VersionInfo 新增 java_override / memory_override / jvm_args_extra
+- [x] 读取/写入 `<version_dir>/tmcl.json`
+- [x] Config 子页面 UI（java / memory / jvm / check / rename / delete）
+- [x] 主页面底部栏改为 [b] [m] [p] [c] [n]（5 项）
+- [x] begin_version 读取版本级覆盖配置
+- [x] check & complete：扫描并补全缺失的 library + asset
 
-### P2 — 账户类型扩展 ✅
+---
 
-- [x] 账户类型选择器（新建时先选类型）
-- [x] Microsoft / LittleSkin / Custom Yggdrasil 显示 "Coming soon"
-- [x] AccountInfo 已包含所有后续需要的字段
+## V2 — NeoForge 启动支持
 
-### P3 — Microsoft 登录 ✅
+NeoForge 是 Forge 的后继者（社区分裂产物），启动机制与 Forge 完全相同：
+- `inheritsFrom` 继承原版
+- `mainClass` 同为 `cpw.mods.modlauncher.Launcher`
+- 使用现代 `arguments` 格式
 
-- [x] OAuth2 device code flow（显示 microsoft.com/link + 验证码）
-- [x] MS token → Xbox Live → XSTS → Minecraft token 链
-- [x] 自动获取 Minecraft Profile（UUID + 用户名）
-- [ ] 账户信息持久化（含 access_token + refresh_token）
+改动很小，主要是 modloader 检测（JSON 中有 `neoforge` 字段）。
 
-### P4 — LittleSkin 登录
-- [x] Yggdrasil API: /authserver/authenticate
-- [x] 邮箱 + 密码输入 UI
+- [ ] init_versions 识别 neoforge 字段 → modloader = "neoforge"
+- [ ] 版本列表显示 neoforge 类型
 
-### P5 — 离线皮肤
-- [x] 皮肤文件路径存储
-- [x] 启动时注入皮肤路径参数
+## V3 — 模组版本安装
 
-### P6 — 自定义 Yggdrasil ✅
+在安装页面支持选择模组加载器（vanilla / fabric / forge / neoforge），根据选择下载对应加载器并合并到版本 JSON。
 
-- [x] 用户输入 Yggdrasil API 根 URL
-- [x] 与 LittleSkin 复用同一认证流程（ygg_auth / ygg_login）
-- [x] 多角色选择器
-- [x] 启动时自动注入 authlib-injector
+- [ ] 安装页面新增 modloader 选择行（默认 vanilla）
+- [ ] Fabric 安装：从 Fabric meta API 拉取 loader 版本
+- [ ] Forge 安装：从 Forge maven 拉取版本列表
+- [ ] NeoForge 安装：从 NeoForge maven 拉取
+- [ ] 下载 loader JAR + 合并 libraries
 
-### P7 — Token 刷新
-- [ ] Microsoft refresh_token 自动续期
-- [ ] Yggdrasil 验证 + 刷新
+## V4 — Mod 页面
+
+版本页面 `[m]od` 按钮的功能：浏览版本目录下的 `mods/` 文件夹，启用/禁用模组。
+
+- [ ] 扫描 `<version_dir>/mods/` 下的 .jar 文件
+- [ ] 列表显示，支持启用/禁用（重命名 .jar → .jar.disabled）
+- [ ] 支持打开 mods 文件夹

@@ -39,16 +39,16 @@
 ## 待实现
 
 ### 账户系统 (P1)
-- [ ] 离线账户 CRUD
-- [ ] UUID v3 生成
+- [x] 离线账户 CRUD
+- [x] UUID v3 生成
 - [ ] 持久化到 accounts.json
 - [ ] 启动时使用选中账户
 
 ### 账户系统 (P2-P7)
 - [ ] Microsoft OAuth2 登录
-- [ ] LittleSkin Yggdrasil 登录
-- [ ] 自定义 Yggdrasil
-- [ ] 离线皮肤
+- [x] LittleSkin Yggdrasil 登录
+- [x] 自定义 Yggdrasil
+- [x] 离线皮肤
 - [ ] Token 刷新
 
 ### 模组支持

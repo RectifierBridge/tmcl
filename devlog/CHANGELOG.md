@@ -1,22 +1,21 @@
 # TMCL 开发日志
 
-## 2026-06 — 启动器核心功能
+## 2026-06-20 — 账户系统 + 版本配置
 
 ### 已完成
-- ✅ 原版 Minecraft 启动（classpath 构建、JVM 参数处理）
-- ✅ Forge 1.7.10+ 启动（launchwrapper 继承链、Java 8 自动匹配）
-- ✅ Fabric 1.21+ 启动（KnotClient、inheritsFrom classpath 合并）
-- ✅ 版本页面 [b]egin / [m]od / [p]in / [r]ename / [n]ew / [d]elete
-- ✅ 首页 Pinned Version + Last Play 快速启动
-- ✅ 配置页面：java_path / memory / game_dir / jvm_args / download_source / mod_source / threads
-- ✅ memory auto 模式（70% 可用内存）
-- ✅ 版本安装：type 选择 → version 选择 → name 输入 → 多线程下载
-- ✅ 下载重试（最多 2 次）+ 失败文件总结
-- ✅ Ctrl+C 优雅取消下载
-- ✅ Asset 去重（已缓存文件跳过）
+- ✅ 账户系统：离线账户 CRUD + UUID v3 生成 + 持久化
+- ✅ LittleSkin / 自定义 Yggdrasil 登录
+- ✅ 启动时自动注入 authlib-injector（皮肤支持）
+- ✅ 离线皮肤（CustomSkinLoader `-Dcustomskinloader.skinPath`）
+- ✅ Yggdrasil token 自动刷新（/authserver/validate + /authserver/refresh）
+- ✅ 版本级配置：[c]onfig 子页面（Java / Memory / JVM Args 覆盖）
+- ✅ check & complete：扫描并补全缺失的 library + asset 文件
+- ✅ rename / delete 移入版本 config 子页面
+- ✅ Config 新增 isolate 设置（版本目录隔离 vs 共享 .minecraft）
+- ✅ 安装器 PK + zip END header 完整性校验
 
 ### 技术债务
-- ⬜ begin_version 中账户信息仍硬编码
-- ⬜ account_page 缺少 [n]ew / [d]elete 功能
-- ⬜ 版本安装不支持 Forge/Fabric
-- ⬜ 没有 asset 文件校验
+- ⬜ Microsoft 登录（等待可用 client ID）
+- ⬜ 版本安装不支持 Forge/Fabric/NeoForge
+- ⬜ [m]od 按钮无功能
+- ⬜ NeoForge 启动支持
