@@ -80,8 +80,8 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
     mvprintw(1, 2, "tap [q] to quit");
     mvprintw(1, col - 25, "Install a new version.");
 
-    // 菜单项
-    const char *labels[] = {"Type", "Version", "Name", "Mod Loader"};
+    // 菜单项：Type, Version, Mod Loader, Name
+    const char *labels[] = {"Type", "Version", "Mod Loader", "Name"};
     char display_ver[64] = "-- select --";
     if (selected_version[0]) snprintf(display_ver, sizeof(display_ver), "%s", selected_version);
     char display_name[64] = "-- enter name --";
@@ -89,7 +89,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
     char display_type[32];
     snprintf(display_type, sizeof(display_type), "%s", types[s.type_sel]);
 
-    char *values[] = {display_type, display_ver, display_name, modloader};
+    char *values[] = {display_type, display_ver, modloader, display_name};
 
     int start_y = 4;
     for (int i = 0; i < 4; i++) {
@@ -135,32 +135,24 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
                      s.version_list[picked]);
             snprintf(selected_url, sizeof(selected_url), "%s",
                      s.version_urls[picked]);
-            // 自动生成 name
+            // 自动生成 name（仅当用户未手动修改时）
             if (user_name[0] == '\0') {
-              int n = snprintf(user_name, sizeof(user_name), "tmcl_%.54s",
-                               selected_version);
-              if (n < 0) user_name[0] = '\0';
+              if (modloader_sel == 0)
+                snprintf(user_name, sizeof(user_name), "tmcl_%.54s",
+                         selected_version);
+              else
+                snprintf(user_name, sizeof(user_name), "tmcl_%s-%.48s",
+                         modloaders[modloader_sel], selected_version);
             }
           }
         }
         break;
-      case 2: // name
-        input_name(user_name, sizeof(user_name));
-        break;
-      case 3: // mod loader
+      case 2: // mod loader
         modloader_sel = pick_modloader(modloader_sel);
         strncpy(modloader, modloaders[modloader_sel], sizeof(modloader) - 1);
-        if (modloader_sel == 0) {
-          // vanilla: 恢复自动生成的 name
-          if (selected_version[0]) {
-            snprintf(user_name, sizeof(user_name), "tmcl_%.54s",
-                     selected_version);
-          }
-        } else if (selected_version[0]) {
-          if (modloader_sel > 0)
-            snprintf(user_name, sizeof(user_name), "tmcl_%s-%.48s",
-                     modloader, selected_version);
-        }
+        break;
+      case 3: // name
+        input_name(user_name, sizeof(user_name));
         break;
       case 4: // start installation
         if (selected_version[0] && selected_url[0]) {
@@ -434,28 +426,26 @@ static int dl_one(const char *url, const char *dest, const char *label) {
   if (!done) { printf("  \033[31mWAIT\033[0m %s\n", label); return 1; }
 
   if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-    // 验证下载完整性：检查 zip PK 开头 + END 结尾
-    FILE *vf = fopen(dest, "rb");
-    if (vf) {
-      unsigned char magic[2];
-      if (fread(magic, 1, 2, vf) == 2 && magic[0] == 'P' && magic[1] == 'K') {
-        // 检查 zip END header（末尾 22 字节中的 signature 0x06054b50）
-        fseek(vf, -22, SEEK_END);
-        unsigned char end[4];
-        if (fread(end, 1, 4, vf) == 4 &&
-            end[0] == 0x50 && end[1] == 0x4b &&
-            end[2] == 0x05 && end[3] == 0x06) {
-          fclose(vf);
-          printf("  \033[32mOK\033[0m  %s\n", label);
-          return 0;
+    // 对 .jar 文件验证 zip 完整性
+    size_t dlen = strlen(dest);
+    if (dlen > 4 && strcmp(dest + dlen - 4, ".jar") == 0) {
+      FILE *vf = fopen(dest, "rb");
+      int valid = 0;
+      if (vf) {
+        unsigned char magic[2];
+        if (fread(magic, 1, 2, vf) == 2 && magic[0]=='P' && magic[1]=='K') {
+          fseek(vf, -22, SEEK_END);
+          unsigned char end[4];
+          if (fread(end, 1, 4, vf) == 4 &&
+              end[0]==0x50 && end[1]==0x4b && end[2]==0x05 && end[3]==0x06)
+            valid = 1;
         }
+        fclose(vf);
       }
-      fclose(vf);
+      if (!valid) { remove(dest); printf("  \033[31mCORRUPT\033[0m %s\n", label); return 1; }
     }
-    // 文件损坏 → 删除并标记失败
-    remove(dest);
-    printf("  \033[31mCORRUPT\033[0m %s\n", label);
-    return 1;
+    printf("  \033[32mOK\033[0m  %s\n", label);
+    return 0;
   } else {
     printf("  \033[31mFAIL\033[0m %s\n", label);
     return 1;
@@ -560,8 +550,22 @@ static int build_lib_task(DlTask *t, cJSON *lib, const char *mcdir) {
   for (char *p = gp; *p; p++)
     if (*p == '.') *p = '/';
 
+  // 优先用 library 自带的 url（Fabric/Forge 等在自有 maven 上），
+  // 否则回退到 Mojang 官方 maven
+  char base_url[512];
+  snprintf(base_url, sizeof(base_url), "https://libraries.minecraft.net/");
+  cJSON *lib_url = cJSON_GetObjectItem(lib, "url");
+  if (lib_url && cJSON_IsString(lib_url) && lib_url->valuestring[0]) {
+    snprintf(base_url, sizeof(base_url), "%s", lib_url->valuestring);
+    // 强制升级 http:// → https://（Maven Central 等已禁用 HTTP）
+    if (strncmp(base_url, "http://", 7) == 0) {
+      memmove(base_url + 8, base_url + 7, strlen(base_url + 7) + 1);
+      memcpy(base_url, "https://", 8);
+    }
+  }
+
   snprintf(t->url, sizeof(t->url),
-           "https://libraries.minecraft.net/%s/%s/%s/%s-%s.jar", gp, artifact,
+           "%s%s/%s/%s/%s-%s.jar", base_url, gp, artifact,
            version, artifact, version);
   snprintf(t->dest, sizeof(t->dest), "%s/libraries/%s/%s/%s/%s-%s.jar", mcdir,
            gp, artifact, version, artifact, version);
@@ -633,8 +637,10 @@ static char *fabric_profile_url(const char *mc_version) {
   if (!arr || !cJSON_IsArray(arr) || cJSON_GetArraySize(arr) == 0) {
     cJSON_Delete(arr); return NULL;
   }
-  cJSON *last = cJSON_GetArrayItem(arr, cJSON_GetArraySize(arr) - 1);
-  cJSON *ver = cJSON_GetObjectItem(last, "version");
+  cJSON *first = cJSON_GetArrayItem(arr, 0);  // 最新 loader 在数组最前面
+  cJSON *loader = cJSON_GetObjectItem(first, "loader");
+  if (!loader) { cJSON_Delete(arr); return NULL; }
+  cJSON *ver = cJSON_GetObjectItem(loader, "version");
   if (!ver || !cJSON_IsString(ver)) { cJSON_Delete(arr); return NULL; }
   char *result = NULL;
   asprintf(&result,
@@ -675,69 +681,181 @@ static void do_install(ConfigState *cstate, const char *version_id,
            custom_name);
   mkdir(version_dir, 0755);
 
-  // 1) 下载版本 JSON
+  // 1) 下载原版版本 JSON（作为基础）
   char json_path[600];
   snprintf(json_path, sizeof(json_path), "%s/%s.json", version_dir,
            custom_name);
-  const char *dl_url = fabric_url ? fabric_url : version_url;
-  if (dl_one(dl_url, json_path, "version JSON") != 0) {
+  if (dl_one(version_url, json_path, "version JSON") != 0) {
     printf("\nFailed to download version JSON. Aborting.\n");
     free(fabric_url); goto done;
   }
-  free(fabric_url);
 
-  // 对于 Fabric，还需下载父版本（vanilla）的 JSON
+  // 对于 Fabric：下载 Fabric profile JSON，合并到原版 JSON 中，
+  // 生成自包含的 JSON（CMCL 风格：无 inheritsFrom，mainClass 直接指向 Fabric）
   if (strcmp(modloader, "fabric") == 0) {
-    cJSON *main_j = NULL;
-    FILE *mjf = fopen(json_path, "r");
-    if (mjf) { fseek(mjf,0,SEEK_END); long s=ftell(mjf); fseek(mjf,0,SEEK_SET);
-      char *d=malloc(s+1); fread(d,1,s,mjf); d[s]=0; fclose(mjf);
-      main_j=cJSON_Parse(d); free(d); }
-    if (main_j) {
-      cJSON *inh = cJSON_GetObjectItem(main_j, "inheritsFrom");
-      if (inh && cJSON_IsString(inh)) {
-        char parent_json_url[512];
-        snprintf(parent_json_url, sizeof(parent_json_url),
-                 "https://piston-meta.mojang.com/v1/packages/"
-                 // 需要从 manifest 获取完整 URL，简化处理：直接用已知格式
-                 "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
-                 );
-        // 简化：从已缓存的 manifest 查找 URL
-        char cmd[1280];
-        snprintf(cmd, sizeof(cmd),
-                 "curl -sL "
-                 "'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json' "
-                 "| python3 -c \"import sys,json; d=json.load(sys.stdin); "
-                 "[print(v['url']) for v in d['versions'] if "
-                 "v['id']=='%s']\" 2>/dev/null",
-                 inh->valuestring);
-        FILE *pp = popen(cmd, "r");
-        if (pp) {
-          char p_url[512] = {0};
-          fgets(p_url, sizeof(p_url), pp);
-          pclose(pp);
-          if (p_url[0]) {
-            p_url[strcspn(p_url, "\n")] = '\0';
-            char parent_path[600];
-            snprintf(parent_path, sizeof(parent_path),
-                     "%s/versions/%s/%s.json", mcdir, inh->valuestring,
-                     inh->valuestring);
-            char dcmd[1200];
-            snprintf(dcmd, sizeof(dcmd),
-                     "mkdir -p \"%s/versions/%s\"", mcdir, inh->valuestring);
-            system(dcmd);
-            char plabel[300];
-            snprintf(plabel, sizeof(plabel), "vanilla parent %s.json",
-                     inh->valuestring);
-            dl_one(p_url, parent_path, plabel);
+    // 从 fabric_url 中提取 loader 版本（URL 格式: .../<mc>/<loader>/profile/json）
+    char loader_ver[64] = {0};
+    {
+      char *url_dup = strdup(fabric_url);
+      if (url_dup) {
+        // 去掉尾部 "/profile/json"
+        char *last_slash = strrchr(url_dup, '/');
+        if (last_slash) {
+          *last_slash = '\0';
+          last_slash = strrchr(url_dup, '/');
+          if (last_slash) {
+            *last_slash = '\0';  // 去掉 "/<loader>"
+            last_slash = strrchr(url_dup, '/');
+            if (last_slash) {
+              snprintf(loader_ver, sizeof(loader_ver), "%s", last_slash + 1);
+            }
           }
         }
+        free(url_dup);
       }
-      cJSON_Delete(main_j);
     }
-  }
 
-  // 2) 解析版本 JSON
+    // 下载 Fabric profile JSON 到内存
+    char cmd[1280];
+    snprintf(cmd, sizeof(cmd), "curl -sL '%s'", fabric_url);
+    FILE *fp = popen(cmd, "r");
+    char *fabric_raw = NULL; size_t fcap = 0, flen = 0;
+    if (fp) {
+      char chunk[4096];
+      while (fgets(chunk, sizeof(chunk), fp)) {
+        size_t cl = strlen(chunk);
+        if (flen + cl + 1 > fcap) { fcap = fcap ? fcap * 2 : 4096; fabric_raw = realloc(fabric_raw, fcap); }
+        memcpy(fabric_raw + flen, chunk, cl); flen += cl; fabric_raw[flen] = '\0';
+      }
+      pclose(fp);
+    }
+    free(fabric_url);
+    fabric_url = NULL;
+
+    cJSON *fprofile = NULL;
+    if (fabric_raw) { fprofile = cJSON_Parse(fabric_raw); free(fabric_raw); }
+    if (!fprofile) { printf("ERROR: Failed to parse Fabric profile JSON.\n"); goto done; }
+
+    // 读取已下载的原版 JSON
+    cJSON *vanilla = NULL;
+    FILE *vf = fopen(json_path, "r");
+    if (vf) {
+      fseek(vf, 0, SEEK_END); long vsz = ftell(vf); fseek(vf, 0, SEEK_SET);
+      char *vd = malloc(vsz + 1);
+      if (vd) { fread(vd, 1, vsz, vf); vd[vsz] = '\0'; vanilla = cJSON_Parse(vd); free(vd); }
+      fclose(vf);
+    }
+    if (!vanilla) { printf("ERROR: Failed to parse vanilla JSON.\n"); cJSON_Delete(fprofile); goto done; }
+
+    // --- 合并操作 ---
+    // a) 改 mainClass
+    cJSON *fb_main = cJSON_GetObjectItem(fprofile, "mainClass");
+    if (fb_main && cJSON_IsString(fb_main)) {
+      cJSON_DeleteItemFromObject(vanilla, "mainClass");
+      cJSON_AddStringToObject(vanilla, "mainClass", fb_main->valuestring);
+    }
+
+    // b) 去重 + 追加 Fabric libraries
+    // Fabric 带了自己的 ASM 等库，如果原版已有同名 library（同 groupId:artifactId），
+    // 移除原版的旧版本，否则 Fabric Loader 检测到重复类会拒绝启动
+    cJSON *fb_libs = cJSON_GetObjectItem(fprofile, "libraries");
+    cJSON *v_libs = cJSON_GetObjectItem(vanilla, "libraries");
+    if (fb_libs && cJSON_IsArray(fb_libs) && v_libs && cJSON_IsArray(v_libs)) {
+      // 先收集 Fabric libraries 的 groupId:artifactId
+      int fb_count = cJSON_GetArraySize(fb_libs);
+      char **fb_ga = malloc(fb_count * sizeof(char *));
+      for (int i = 0; i < fb_count; i++) {
+        fb_ga[i] = NULL;
+        cJSON *lib = cJSON_GetArrayItem(fb_libs, i);
+        cJSON *nm = cJSON_GetObjectItem(lib, "name");
+        if (nm && cJSON_IsString(nm)) {
+          char *ns = strdup(nm->valuestring);
+          char *first_colon = strchr(ns, ':');
+          if (first_colon) {
+            char *second_colon = strchr(first_colon + 1, ':');
+            if (second_colon) *second_colon = '\0';  // 截断到 groupId:artifactId
+          }
+          fb_ga[i] = ns;
+        }
+      }
+      // 移除原版中重复的 library（从后往前遍历以免索引错位）
+      int v_count = cJSON_GetArraySize(v_libs);
+      for (int i = v_count - 1; i >= 0; i--) {
+        cJSON *lib = cJSON_GetArrayItem(v_libs, i);
+        cJSON *nm = cJSON_GetObjectItem(lib, "name");
+        if (nm && cJSON_IsString(nm)) {
+          char *ns = strdup(nm->valuestring);
+          char *fc = strchr(ns, ':');
+          if (fc) {
+            char *sc = strchr(fc + 1, ':');
+            if (sc) *sc = '\0';
+          }
+          for (int j = 0; j < fb_count; j++) {
+            if (fb_ga[j] && strcmp(ns, fb_ga[j]) == 0) {
+              cJSON_DeleteItemFromArray(v_libs, i);
+              break;
+            }
+          }
+          free(ns);
+        }
+      }
+      for (int i = 0; i < fb_count; i++) free(fb_ga[i]);
+      free(fb_ga);
+      // 追加 Fabric libraries
+      cJSON *lib;
+      cJSON_ArrayForEach(lib, fb_libs) {
+        cJSON_AddItemToArray(v_libs, cJSON_Duplicate(lib, 1));
+      }
+    }
+
+    // c) 合并 arguments（Fabric 可能有额外的 JVM 参数，跳过 -DFabric.*）
+    cJSON *fb_args = cJSON_GetObjectItem(fprofile, "arguments");
+    cJSON *v_args = cJSON_GetObjectItem(vanilla, "arguments");
+    if (fb_args && v_args) {
+      cJSON *fb_jvm = cJSON_GetObjectItem(fb_args, "jvm");
+      cJSON *v_jvm = cJSON_GetObjectItem(v_args, "jvm");
+      if (fb_jvm && cJSON_IsArray(fb_jvm) && v_jvm && cJSON_IsArray(v_jvm)) {
+        cJSON *jv;
+        cJSON_ArrayForEach(jv, fb_jvm) {
+          if (cJSON_IsString(jv)) {
+            if (strncmp(jv->valuestring, "-DFabric", 8) == 0) continue;
+          }
+          cJSON_AddItemToArray(v_jvm, cJSON_Duplicate(jv, 1));
+        }
+      }
+    }
+
+    // d) 添加元数据（init_versions 用 fabric / gameVersion 字段检测）
+    cJSON_AddStringToObject(vanilla, "gameVersion", version_id);
+    cJSON *fabric_meta = cJSON_CreateObject();
+    cJSON_AddStringToObject(fabric_meta, "loaderVersion",
+                            loader_ver[0] ? loader_ver : "unknown");
+    cJSON_AddItemToObject(vanilla, "fabric", fabric_meta);
+
+    // e) 移除 inheritsFrom（现在是自包含 JSON）
+    cJSON_DeleteItemFromObject(vanilla, "inheritsFrom");
+
+    // f) 改 id
+    cJSON_DeleteItemFromObject(vanilla, "id");
+    cJSON_AddStringToObject(vanilla, "id", custom_name);
+
+    // 写回合并后的 JSON
+    char *merged = cJSON_Print(vanilla);
+    if (merged) {
+      FILE *mf = fopen(json_path, "w");
+      if (mf) { fputs(merged, mf); fclose(mf); }
+      free(merged);
+      printf("  OK  merged Fabric + vanilla JSON\n");
+    }
+
+    cJSON_Delete(vanilla);
+    cJSON_Delete(fprofile);
+  } else {
+    free(fabric_url);
+  }
+  fabric_url = NULL;
+
+  // 2) 解析版本 JSON（原版为直接下载的，Fabric 为合并后的自包含 JSON）
   FILE *jf = fopen(json_path, "r");
   if (!jf) { printf("Failed to read version JSON.\n"); goto done; }
   fseek(jf, 0, SEEK_END);
@@ -756,7 +874,7 @@ static void do_install(ConfigState *cstate, const char *version_id,
   DlTask *tasks = malloc(8192 * sizeof(DlTask));
   int tcount = 0;
 
-  // a) client.jar
+  // a) client.jar（合并后的 JSON 自带 downloads.client）
   cJSON *downloads = cJSON_GetObjectItem(root, "downloads");
   if (downloads) {
     cJSON *client = cJSON_GetObjectItem(downloads, "client");
@@ -773,7 +891,7 @@ static void do_install(ConfigState *cstate, const char *version_id,
     }
   }
 
-  // b) libraries
+  // b) libraries（合并后的 JSON 已包含 vanilla + Fabric 全部 libraries）
   cJSON *libraries = cJSON_GetObjectItem(root, "libraries");
   int lib_match = 0;
   if (libraries && cJSON_IsArray(libraries)) {
@@ -798,7 +916,7 @@ static void do_install(ConfigState *cstate, const char *version_id,
     }
   }
 
-  // c) asset index
+  // c) asset index（合并后的 JSON 自带 assetIndex）
   char ai_url[1024] = {0};
   char ai_path[512] = {0};
   cJSON *assetIndex = cJSON_GetObjectItem(root, "assetIndex");

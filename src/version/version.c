@@ -1148,10 +1148,7 @@ void version_config_page(VersionState *state, int index,
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
-    mvprintw(0, 0, "[V]ersion [C]onfig ");
-    attron(A_REVERSE);
-    printw("Version Config: %s", v->name);
-    attroff(A_REVERSE);
+    mvprintw(0, 2, "Version Config: %s", v->name);
     mvprintw(0, col - 15, "tap [q] to quit");
 
     // 表头
