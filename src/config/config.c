@@ -15,8 +15,8 @@ void config_init(ConfigState *state) {
   // 初始化配置项
   char *home_dir = getenv("HOME");
   strcpy(state->home_dir, home_dir);
-  state->item_count = 10;
-  state->items = malloc(state->item_count * sizeof(ConfigItem));
+  state->item_count = 11;
+ state->items = malloc(state->item_count * sizeof(ConfigItem));
 
   // 打开tmcl目录
   char tmcl_dir[1024];
@@ -29,13 +29,15 @@ void config_init(ConfigState *state) {
 
   char game_dir[1024];
   snprintf(game_dir, sizeof(game_dir), "%s/.minecraft", home_dir);
-  char *keys[] = {"java_path",      "memory",          "game_dir",
-                  "jvm_args",       "download_cource", "mod_source",
-                  "threads",        "isolate",         "pinned_version",
-                  "last_play"};
-  char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
-                            "Official",       "CurseForge", "96",     "yes",
-                            "",               ""};
+ char *keys[] = {"java_path",      "memory",          "game_dir",
+                 "jvm_args",       "download_cource", "mod_source",
+                  "lib_threads",    "ast_threads",     "isolate",
+                 "pinned_version",
+                 "last_play"};
+ char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
+                           "Official",       "CurseForge", "16",     "96",
+                           "yes",
+                           "",               ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -107,6 +109,23 @@ void config_init(ConfigState *state) {
   }
   state->selected_item = 0;
   state->scroll_offset = 0;
+}
+
+// 通过 key 字符串读写配置项，避免硬编码索引
+const char *config_get(ConfigState *state, const char *key) {
+  for (int i = 0; i < state->item_count; i++)
+    if (strcmp(state->items[i].key, key) == 0)
+      return state->items[i].value;
+  return "";
+}
+
+void config_set(ConfigState *state, const char *key, const char *value) {
+  for (int i = 0; i < state->item_count; i++)
+    if (strcmp(state->items[i].key, key) == 0) {
+      strncpy(state->items[i].value, value, sizeof(state->items[i].value) - 1);
+      state->items[i].value[sizeof(state->items[i].value) - 1] = '\0';
+      return;
+    }
 }
 
 void config_page(int ch, int *middlep, ConfigState *state) {
@@ -258,8 +277,10 @@ void change_config(ConfigState *state) {
   getmaxyx(stdscr, row, col);
   int idx = state->selected_item;
 
-  if (idx == 1) {
-    // ---- memory 配置：支持 "auto" 和手动输入数字 ----
+  const char *key = state->items[idx].key;
+
+  if (strcmp(key, "memory") == 0) {
+   // ---- memory 配置：支持 "auto" 和手动输入数字 ----
     echo();
     curs_set(1);
     clear();
@@ -291,8 +312,8 @@ void change_config(ConfigState *state) {
     curs_set(0);
     clear();
 
-  } else if (idx == 4) {
-    // ---- download_source：Official / BMCLAPI 选择器 ----
+  } else if (strcmp(key, "download_cource") == 0) {
+    // ---- download_cource：Official / BMCLAPI 选择器 ----
     const char *opts[] = {"Official", "BMCLAPI"};
     int sel = (strcmp(state->items[idx].value, "BMCLAPI") == 0) ? 1 : 0;
     while (1) {
@@ -316,7 +337,7 @@ void change_config(ConfigState *state) {
     }
     clear();
 
-  } else if (idx == 5) {
+  } else if (strcmp(key, "mod_source") == 0) {
     // ---- mod_source：CurseForge / Modrinth 选择器 ----
     const char *opts[] = {"CurseForge", "Modrinth"};
     int sel = (strcmp(state->items[idx].value, "Modrinth") == 0) ? 1 : 0;
@@ -341,14 +362,14 @@ void change_config(ConfigState *state) {
     }
     clear();
 
-  } else if (idx == 6) {
-    // ---- threads：正整数输入 ----
+  } else if (strcmp(key, "lib_threads") == 0 || strcmp(key, "ast_threads") == 0) {
+    // ---- 下载线程数：正整数输入 ----
     echo();
     curs_set(1);
     clear();
     mvprintw(3, 2, "Change config: %s", state->items[idx].key);
     mvprintw(5, 2, "Current config: %s", state->items[idx].value);
-    mvprintw(9, 2, "Enter a number ≥1 (empty to cancel)");
+    mvprintw(9, 2, "Enter a number >=1 (empty to cancel)");
     mvprintw(7, 2, "Enter new config: ");
 
     char input[64];
@@ -366,7 +387,7 @@ void change_config(ConfigState *state) {
     curs_set(0);
     clear();
 
-  } else if (idx == 7) {
+  } else if (strcmp(key, "isolate") == 0) {
     // ---- isolate：yes / no 选择器 ----
     const char *opts[] = {"yes", "no"};
     int sel = (strcmp(state->items[idx].value, "no") == 0) ? 1 : 0;
@@ -393,7 +414,7 @@ void change_config(ConfigState *state) {
     }
     clear();
 
-  } else if (idx < 4) {
+  } else {
     // ---- java_path (0), game_dir (2), jvm_args (3)：自由文本输入 ----
     echo();
     curs_set(1);

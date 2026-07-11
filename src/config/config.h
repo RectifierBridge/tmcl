@@ -29,4 +29,8 @@ void config_cleanup(ConfigState *state);
 void config_write(ConfigState *state);
 int config_get_memory_mb(ConfigState *state);
 
+// 通过 key 字符串读写配置项，避免硬编码索引
+const char *config_get(ConfigState *state, const char *key);
+void config_set(ConfigState *state, const char *key, const char *value);
+
 #endif

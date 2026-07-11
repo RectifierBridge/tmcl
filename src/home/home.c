@@ -14,14 +14,12 @@ void home_init(HomeState *state, VersionState *VersionState,
 
   // look for pinned_index and last_index
   for (int i = 0; i < VersionState->version_count; i++) {
-    if (state->pinned_index < 0 &&
-        strcmp(VersionState->versions[i].name, ConfigState->items[6].value) ==
-            0) {
+    if (state->pinned_index < 0 && strcmp(VersionState->versions[i].name,
+                                          ConfigState->items[9].value) == 0) {
       state->pinned_index = i;
     }
-    if (state->last_index < 0 &&
-        strcmp(VersionState->versions[i].name, ConfigState->items[7].value) ==
-            0) {
+    if (state->last_index < 0 && strcmp(VersionState->versions[i].name,
+                                        ConfigState->items[10].value) == 0) {
       state->last_index = i;
     }
     if (state->pinned_index >= 0 && state->last_index >= 0)
@@ -38,18 +36,47 @@ void home_page(int ch, int *middlep, HomeState *state,
   int cur_row, cur_col;
 
   // print hellow
-  printw("\n\n  Welcome to:\n\n");
+  printw("\n\nWelcome to:\n\n");
   printw(" ########  ###    ###  #######  ##    \n");
   printw("    ##     ####  ####  ##       ##    \n");
   printw("    ##     ## #### ##  ##       ##    \n");
   printw("    ##     ##  ##  ##  ##       ##    \n");
-  printw("    ##     ##      ##  #######  ######\n\n");
-  printw("  Terminal Minecraft Launcher is a high-speed, lightweight TUI-based launcher for Minecraft: Java Edition. Primarily developed for GNU/Linux operating systems, it is free and open-source software licensed under the GNU GPL v3.0. You can navigate and operate it with Vim-style keybindings. This program is built by alephteam, a young team composed entirely of teenage developers, with aleph0 serving as its lead author.\n");
-  printw("  You can quick start easily in this TMCL home page.\n");
-  printw("  Buy us a coffee.It is very important to us.Even 1$ counts.\n");
+  printw("    ##     ##      ##  #######  ######\n\n\n");
+  printw(
+      "  Terminal Minecraft Launcher (TMCL) is a lightweight TUI-based "
+      "launcher "
+      "for Minecraft: Java Edition, developed primarily for GNU/Linux by aleph "
+      "in C. TMCL is free software released under the GPL-3.0 license—you are "
+      "free to redistribute or fork it, as long as you give proper credit to "
+      "the original source.\n"
+      "  This is the TMCL homepage, where you can quickly "
+      "launch a fixed game version or the one you last played. Navigation "
+      "follows Vim‑style keybindings: use h/j/k/l to move the cursor, H/L to "
+      "shift the top navigation bar cursor, and press the corresponding key "
+      "shown in brackets, or select an action from the bottom bar and hit "
+      "Enter to execute it.\n"
+      "  TMCL currently supports installing and launching vanilla, Fabric, "
+      "Forge, and NeoForge game versions. It can load mods, "
+      "but does not support mod management, shader packs, resource packs, "
+      "modpacks, automatic OptiFine installation, etc.\n"
+      "  TMCL is completely "
+      "free. If you paid for it, you've been scammed. Also, please abide by "
+      "Microsoft's relevant regulations regarding Minecraft-we support "
+      "legitimate copies.\n"
+      "  The original project repository is at "
+      "https://codeberg.org/furii/tmcl. If you like TMCL, feel free to leave a "
+      "star, and we welcome suggestions or bug reports.\n"
+      "  Currently, the only contributor to TMCL is aleph0, a free-software "
+      "enthusiast from China. "
+      "He is the author of TMCL and the founder of aleph. When he started this "
+      "project, he was just a high school student with extremely limited "
+      "coding skills, little relevant experience, and not much spare time-so "
+      "please bear with us. That said, you are also welcome to join us.\n"
+      "  Buy us a coffee-it really means a lot to us, even a single dollar "
+      "counts.\n\n");
   getyx(stdscr, cur_row, cur_col);
-  mvprintw(cur_row , col - 25, "Main Developer: aleph0\n");
-  mvprintw(cur_row + 1, col - 25, "Our Team: alephteam");
+  mvprintw(cur_row, col - 27, "contact:");
+  mvprintw(cur_row + 1, col - 27, "aleph0: fossrina@163.com");
 
   // key
   switch (ch) {
@@ -59,10 +86,11 @@ void home_page(int ch, int *middlep, HomeState *state,
   case 'k':
     state->selected = 0;
     break;
+  case 'b':
   case '\n': {
     // 启动选中的版本（Pinned 或 Last Play）
-    int target = (state->selected == 0) ? state->pinned_index
-                                        : state->last_index;
+    int target =
+        (state->selected == 0) ? state->pinned_index : state->last_index;
     if (target >= 0 && target < VersionState->version_count) {
       int saved = VersionState->selected_version;
       VersionState->selected_version = target;
@@ -78,34 +106,34 @@ void home_page(int ch, int *middlep, HomeState *state,
   }
 
   // two game versions to display
-  move(cur_row + 3, 4);
+  move(4, 45);
   printw("Pinned Version:\n");
   if (state->selected == 0) {
     attron(A_REVERSE);
   }
   if (VersionState->version_count == 0) {
-    mvprintw(cur_row + 4, 4,"No version installed.");
+    mvprintw(5, 45, "No version installed.");
   } else if (state->pinned_index < 0) {
-    mvprintw(cur_row + 4, 4, "No pinned version.");
+    mvprintw(5, 45, "No pinned version.");
   } else {
-    mvprintw(cur_row + 4, 4, "%s", VersionState->versions[state->pinned_index].name);
+    mvprintw(5, 45, "%s", VersionState->versions[state->pinned_index].name);
   }
   if (state->selected == 0) {
     attroff(A_REVERSE);
   }
 
-  move(cur_row + 6, 4);
+  move(7, 45);
   printw("Last Play:\n");
   if (state->selected == 1) {
     attron(A_REVERSE);
   }
   if (state->last_index >= 0) {
-    mvprintw(cur_row + 7, 4, "%s", VersionState->versions[state->last_index].name);
+    mvprintw(8, 45, "%s", VersionState->versions[state->last_index].name);
   } else {
-    mvprintw(cur_row + 7, 4, "not play yet.");
+    mvprintw(8, 45, "not play yet.");
   }
   if (state->selected == 1) {
     attroff(A_REVERSE);
   }
-  mvprintw(row - 1, 0, "tap [Enter] to start");
+  mvprintw(row - 1, 0, "tap [Enter] or [b] to begin");
 }

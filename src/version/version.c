@@ -306,9 +306,9 @@ static void save_version_config(VersionState *state, int index,
 // 替换参数占位符 ${...}
 static void sub_arg(char *dest, const char *src, size_t dest_size,
                     const char *vname, const char *gdir, const char *adir,
-                    const char *aidx, const char *ndir, const char *cp,
-                    const char *uname, const char *uuid, const char *tok,
-                    const char *utype, const char *vtype) {
+                    const char *aidx, const char *ndir, const char *libdir,
+                    const char *cp, const char *uname, const char *uuid,
+                    const char *tok, const char *utype, const char *vtype) {
   dest[0] = '\0';
   size_t di = 0;
   const char *p = src;
@@ -343,6 +343,10 @@ static void sub_arg(char *dest, const char *src, size_t dest_size,
           val = vtype;
         else if (strcmp(key, "natives_directory") == 0)
           val = ndir;
+        else if (strcmp(key, "library_directory") == 0)
+          val = libdir;
+        else if (strcmp(key, "classpath_separator") == 0)
+          val = ":";
         else if (strcmp(key, "launcher_name") == 0)
           val = "tmcl";
         else if (strcmp(key, "launcher_version") == 0)
@@ -353,6 +357,18 @@ static void sub_arg(char *dest, const char *src, size_t dest_size,
           val = "0";
         else if (strcmp(key, "auth_xuid") == 0)
           val = "0";
+        else if (strcmp(key, "resolution_width") == 0)
+          val = "854";
+        else if (strcmp(key, "resolution_height") == 0)
+          val = "480";
+        else if (strcmp(key, "quickPlayPath") == 0)
+          val = "";
+        else if (strcmp(key, "quickPlaySingleplayer") == 0)
+          val = "";
+        else if (strcmp(key, "quickPlayMultiplayer") == 0)
+          val = "";
+        else if (strcmp(key, "quickPlayRealms") == 0)
+          val = "";
         else if (strcmp(key, "user_properties") == 0)
           val = "{}";
 
@@ -433,9 +449,9 @@ static cJSON *read_ver_json(const char *mcdir, const char *vname) {
 static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
                         char ***tofree, int *fc, const char *vname,
                         const char *gdir, const char *adir, const char *aidx,
-                        const char *ndir, const char *cp, const char *uname,
-                        const char *uuid, const char *tok, const char *utype,
-                        const char *vtype) {
+                        const char *ndir, const char *libdir, const char *cp,
+                        const char *uname, const char *uuid, const char *tok,
+                        const char *utype, const char *vtype) {
   if (!arr || !cJSON_IsArray(arr))
     return;
   cJSON *it;
@@ -444,9 +460,11 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
       break;
 
     if (cJSON_IsString(it)) {
-      char *buf = malloc(1024);
-      sub_arg(buf, it->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
-              uname, uuid, tok, utype, vtype);
+      // 用完整的 classpath 长度作为缓冲区大小，防止 ${classpath} 展开被截断
+      size_t buf_sz = 16384;
+      char *buf = malloc(buf_sz);
+      sub_arg(buf, it->valuestring, buf_sz, vname, gdir, adir, aidx, ndir, libdir,
+              cp, uname, uuid, tok, utype, vtype);
       args[(*ac)++] = buf;
       (*tofree)[(*fc)++] = buf;
     } else if (cJSON_IsObject(it)) {
@@ -457,9 +475,10 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
       if (!val)
         continue;
       if (cJSON_IsString(val)) {
-        char *buf = malloc(1024);
-        sub_arg(buf, val->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
-                uname, uuid, tok, utype, vtype);
+        size_t buf_sz = 16384;
+        char *buf = malloc(buf_sz);
+        sub_arg(buf, val->valuestring, buf_sz, vname, gdir, adir, aidx, ndir,
+                libdir, cp, uname, uuid, tok, utype, vtype);
         args[(*ac)++] = buf;
         (*tofree)[(*fc)++] = buf;
       } else if (cJSON_IsArray(val)) {
@@ -468,9 +487,10 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
           if (*ac >= max_ac - 1)
             break;
           if (cJSON_IsString(vi)) {
-            char *buf = malloc(1024);
-            sub_arg(buf, vi->valuestring, 1024, vname, gdir, adir, aidx, ndir,
-                    cp, uname, uuid, tok, utype, vtype);
+            size_t buf_sz = 16384;
+            char *buf = malloc(buf_sz);
+            sub_arg(buf, vi->valuestring, buf_sz, vname, gdir, adir, aidx, ndir,
+                    libdir, cp, uname, uuid, tok, utype, vtype);
             args[(*ac)++] = buf;
             (*tofree)[(*fc)++] = buf;
           }
@@ -484,18 +504,19 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
 static void legacy_args(const char *mc_args, char **args, int *ac, int max_ac,
                         char ***tofree, int *fc, const char *vname,
                         const char *gdir, const char *adir, const char *aidx,
-                        const char *ndir, const char *cp, const char *uname,
-                        const char *uuid, const char *tok, const char *utype,
-                        const char *vtype) {
+                        const char *ndir, const char *libdir, const char *cp,
+                        const char *uname, const char *uuid, const char *tok,
+                        const char *utype, const char *vtype) {
   if (!mc_args)
     return;
   char *dup = strdup(mc_args);
   char *saveptr;
   char *token = strtok_r(dup, " ", &saveptr);
   while (token && *ac < max_ac - 1) {
-    char *buf = malloc(1024);
-    sub_arg(buf, token, 1024, vname, gdir, adir, aidx, ndir, cp, uname, uuid,
-            tok, utype, vtype);
+    size_t buf_sz = 16384;
+    char *buf = malloc(buf_sz);
+    sub_arg(buf, token, buf_sz, vname, gdir, adir, aidx, ndir, libdir, cp,
+            uname, uuid, tok, utype, vtype);
     args[(*ac)++] = buf;
     (*tofree)[(*fc)++] = buf;
     token = strtok_r(NULL, " ", &saveptr);
@@ -532,8 +553,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   if (state->version_count == 0 || idx < 0 || idx >= state->version_count)
     return;
 
-  strcpy(ConfigState->items[7].value, state->versions[idx].name);
-  config_write(ConfigState);
+  strcpy(ConfigState->items[10].value, state->versions[idx].name);
+ config_write(ConfigState);
 
   endwin();
   char *mcdir = ConfigState->items[2].value;
@@ -572,9 +593,9 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   // ---- 游戏目录（根据 isolate 配置决定隔离还是共享）----
   char vdir[512];
   snprintf(vdir, sizeof(vdir), "%s/versions/%s", mcdir, vname);
-  const char *gdir = (strcmp(ConfigState->items[7].value, "no") == 0)
-                         ? mcdir
-                         : vdir;
+  const char *gdir = (strcmp(ConfigState->items[8].value, "no") == 0)
+                        ? mcdir
+                        : vdir;
 
   // ---- 找 natives 目录 ----
   char natives_dir[512] = "";
@@ -599,6 +620,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   // ---- 路径 ----
   char assets_dir[256];
   snprintf(assets_dir, sizeof(assets_dir), "%s/assets", mcdir);
+  char lib_dir[512];
+  snprintf(lib_dir, sizeof(lib_dir), "%s/libraries", mcdir);
 
   // ---- 账户信息（从选中的账户读取，启动前刷新 token）----
   AccountInfo *acct =
@@ -727,8 +750,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     // 新版 arguments 格式
     cJSON *jvm = cJSON_GetObjectItem(args_obj, "jvm");
     append_args(jvm, args, &ac, 300, &tofree, &fc, vname, gdir, assets_dir,
-                asset_index, natives_dir, classpath, uname, uuid_str, token_str,
-                utype_str, vtype_str);
+                asset_index, natives_dir, lib_dir, classpath, uname, uuid_str,
+                token_str, utype_str, vtype_str);
 
     // authlib-injector / 离线皮肤（必须在 -cp 之前）
     if (skin_arg && ac < 300 - 4) {
@@ -765,8 +788,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     // 游戏参数
     cJSON *game = cJSON_GetObjectItem(args_obj, "game");
     append_args(game, args, &ac, 300, &tofree, &fc, vname, gdir, assets_dir,
-                asset_index, natives_dir, classpath, uname, uuid_str, token_str,
-                utype_str, vtype_str);
+                asset_index, natives_dir, lib_dir, classpath, uname, uuid_str,
+                token_str, utype_str, vtype_str);
   } else {
     // 旧版格式：使用 minecraftArguments
     const char *mc_args = NULL;
@@ -812,8 +835,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
 
     if (mc_args) {
       legacy_args(mc_args, args, &ac, 300, &tofree, &fc, vname, gdir,
-                  assets_dir, asset_index, natives_dir, classpath, uname,
-                  uuid_str, token_str, utype_str, vtype_str);
+                  assets_dir, asset_index, natives_dir, lib_dir, classpath,
+                  uname, uuid_str, token_str, utype_str, vtype_str);
     } else {
       // 最简回退
       args[ac++] = "--username";
@@ -882,8 +905,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
 
 // pin_version函数
 void pin_version(VersionState *state, ConfigState *ConfigState) {
-  strcpy(ConfigState->items[6].value,
-         state->versions[state->selected_version].name);
+  strcpy(ConfigState->items[9].value,
+        state->versions[state->selected_version].name);
   config_write(ConfigState);
 }
 
@@ -893,8 +916,8 @@ void mod(VersionState *state, int index) {
     return;
 }
 // 重命名版本函数
-void rename_version(VersionState *state, int index) {
-  if (index < 0 || index >= state->version_count || state->version_count == 0)
+void rename_version(VersionState *state, int index, ConfigState *ConfigState) {
+ if (index < 0 || index >= state->version_count || state->version_count == 0)
     return;
 
   int row, col;
@@ -911,11 +934,65 @@ void rename_version(VersionState *state, int index) {
   char new_name[64];
   getnstr(new_name, sizeof(new_name) - 1);
 
-  strncpy(state->versions[index].name, new_name,
-          sizeof(state->versions[index].name) - 1);
+ strncpy(state->versions[index].name, new_name,
+         sizeof(state->versions[index].name) - 1);
 
-  noecho(); // 关闭回显
-  curs_set(0);
+  // 重命名磁盘上的版本目录及内部文件
+  {
+    char *mcdir = ConfigState->items[2].value;
+    const char *old_name = state->versions[index].version;
+    char old_dir[600], new_dir[600];
+    snprintf(old_dir, sizeof(old_dir), "%s/versions/%s", mcdir, old_name);
+    snprintf(new_dir, sizeof(new_dir), "%s/versions/%s", mcdir, new_name);
+
+    // 先重命名目录，然后更新内部的 jar/json 文件名和 JSON 的 id 字段
+    char mv_cmd[1280];
+    snprintf(mv_cmd, sizeof(mv_cmd), "mv '%s' '%s' 2>/dev/null", old_dir, new_dir);
+    if (system(mv_cmd) == 0) {
+      // 重命名 jar 文件
+      snprintf(mv_cmd, sizeof(mv_cmd), "mv '%s/%s.jar' '%s/%s.jar' 2>/dev/null",
+               new_dir, old_name, new_dir, new_name);
+      system(mv_cmd);
+      // 重命名 json 文件
+      snprintf(mv_cmd, sizeof(mv_cmd), "mv '%s/%s.json' '%s/%s.json' 2>/dev/null",
+               new_dir, old_name, new_dir, new_name);
+      system(mv_cmd);
+      // 更新 JSON 文件中的 id 字段
+      char json_path[600];
+      snprintf(json_path, sizeof(json_path), "%s/%s.json", new_dir, new_name);
+      FILE *jf = fopen(json_path, "r");
+      if (jf) {
+        fseek(jf, 0, SEEK_END);
+        long sz = ftell(jf);
+        rewind(jf);
+        char *js = malloc(sz + 1);
+        if (js) {
+          fread(js, 1, sz, jf);
+          js[sz] = '\0';
+          fclose(jf);
+          cJSON *json = cJSON_Parse(js);
+          free(js);
+          if (json) {
+            cJSON_ReplaceItemInObject(json, "id", cJSON_CreateString(new_name));
+            char *out = cJSON_Print(json);
+            if (out) {
+              FILE *of = fopen(json_path, "w");
+              if (of) { fprintf(of, "%s", out); fclose(of); }
+              free(out);
+            }
+            cJSON_Delete(json);
+          }
+        } else {
+          fclose(jf);
+        }
+      }
+      // 刷新版本列表
+      init_versions(state, ConfigState);
+    }
+  }
+
+ noecho(); // 关闭回显
+ curs_set(0);
 
   // 清除重命名界面，主循环会重新绘制完整界面
   clear();
@@ -1229,10 +1306,10 @@ void version_config_page(VersionState *state, int index,
       case 3: // check & complete
         check_complete(state, index, ConfigState);
         break;
-      case 4: // rename
-        rename_version(state, index);
-        save_version_config(state, index, ConfigState);
-        break;
+     case 4: // rename
+       rename_version(state, index, ConfigState);
+       save_version_config(state, index, ConfigState);
+      break;
       case 5: // delete
         delete_version(state, index, ConfigState);
         goto done;
@@ -1338,8 +1415,8 @@ void version_page(int ch, int *middlep, VersionState *state,
     }
 
     char pin[4] = " ";
-    if (strcmp(ConfigState->items[6].value, state->versions[i].name) == 0) {
-      strcpy(pin, "*");
+    if (strcmp(ConfigState->items[9].value, state->versions[i].name) == 0) {
+     strcpy(pin, "*");
     }
     // 显示版本信息：pin否、类型、模组加载器、版本号、名字
     printw("%s %-7s %-9s %-9s %s", pin, state->versions[i].type,
