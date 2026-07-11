@@ -1,36 +1,86 @@
-# Terminal Minecraft Launcher
+<p align="center">
+  <img src="tmcl.png" width="80" alt="TMCL logo" />
+</p>
+<h1 align="center">Terminal Minecraft Launcher</h1>
 
-## 介绍
-Terminal Minecraft Launcher（TMCL） 是一款轻量级的、基于TUI的Minecraft Java版启动器，
-由aleph使用C语言开发，主要面向GNU/Linux系统。
+> *[中文版](README.zh.md)*
 
-TMCL是遵循GPL-3.0许可证发布的自由软件——您可以自由再分发或派生，只需对原始来源给予注明。
+## About
 
-目前仍在开发中，暂时不能使用
+Terminal Minecraft Launcher (TMCL) is a lightweight, TUI-based Minecraft Java Edition launcher written in C by aleph, primarily targeting GNU/Linux systems.
 
-TMCL目前支持安装和启动原版、Fabric、Forge和NeoForge游戏版本。它可以加载模组，但不支持模组管理、光影包、资源包、整合包、自动安装OptiFine等功能。
+TMCL is free software released under the GPL-3.0 license — you may freely redistribute and derive from it, provided you retain the original copyright notice. Open source is a means to freedom.
 
-## 安装教程
+TMCL currently supports installing and launching the following game versions:
 
-- 安装cjson、cmake
-- 克隆本仓库
-- cd进入tmcl目录
-- 执行make install
-- 卸载执行make uninstall
+- **Vanilla** — all release, snapshot, and ancient versions
+- **Fabric** — automatic Loader version matching
+- **Forge** — modern 1.13+ and legacy 1.7.10–1.12.2
+- **NeoForge** — 1.20.1 and above
 
+TMCL can load mods, but does not include a mod manager, shader/resource pack support, modpack support, or automatic OptiFine installation.
 
-## 使用说明
+> **Note:** The project is still in early development and not recommended for daily use yet.
 
-- 中括号中的是按键
-- 可以使用hjklHL来移动
+## Installation
 
-### 另外
-请遵守微软关于Minecraft的相关规定——我们支持正版，提倡正版。
+### Dependencies
 
-原始项目仓库位于 https://codeberg.org/furii/tmcl 。如果您喜欢TMCL，欢迎点个星标，我们也乐于接受建议或错误报告。
-目前TMCL的唯一贡献者是aleph0，一位来自中国的自由软件爱好者。他是TMCL的作者，也是aleph的创始人。当他启动这个项目时，他还只是一名高中生，编程技能极其有限，相关经验很少，空闲时间也不多——所以请多包涵。当然，我们也欢迎您加入我们。
+- **GCC** (C compiler)
+- **ncurses** — terminal UI library
+- **cJSON** — JSON parsing library
+- **curl** — network downloads
+- **pthread** — multi-threading
 
-##### 请我们买杯咖啡咖啡——这对我们意义重大，对该项目能否持续也意义重大。哪怕只有5元也弥足珍贵。
+Debian / Ubuntu:
 
-#### 联系我们
-- aleph0  fossrina@163.com
+```bash
+sudo apt install gcc libncurses-dev libcjson-dev libcurl4-openssl-dev
+
+Arch Linux:
+
+```bash
+sudo pacman -S gcc ncurses cjson curl
+```
+```
+
+### Build from source
+
+```bash
+git clone https://codeberg.org/furii/tmcl.git
+cd tmcl
+make
+make install         # installs to /usr/local/bin/tmcl
+make uninstall       # uninstall
+```
+
+## Usage
+
+- Keys shown in brackets are shortcuts (e.g. `[C]onfig` means press `c` for settings)
+- Vim-style keybindings: `h` / `j` / `k` / `l` to navigate, `Enter` to confirm, `q` to quit
+
+## Contributing
+
+- File an issue on [Codeberg](https://codeberg.org/furii/tmcl) to report bugs or request features
+- Fork the repository and submit a Pull Request
+
+## License
+
+This project is released under **GPLv3**, with the following additional term (per GPLv3 Section 7):
+
+- You may not remove the copyright notices displayed by the program (7(b))
+
+## Credits & Contact
+
+- Upstream repository: https://codeberg.org/furii/tmcl — a star is appreciated if you like TMCL
+- Please comply with Microsoft's relevant regulations regarding Minecraft — we support genuine copies
+
+### Contributors
+
+Currently the sole contributor to TMCL is **aleph0**, a free software enthusiast from China. When he started this project he was still a high school student with limited programming experience, little domain knowledge, and not much free time — your understanding is appreciated. We welcome your participation as well.
+
+<p align="center"><i>Buy us a coffee — it means a lot to us</i></p>
+
+### Contact
+
+- aleph0 &lt;fossrina@163.com&gt;
