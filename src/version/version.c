@@ -306,9 +306,9 @@ static void save_version_config(VersionState *state, int index,
 // 替换参数占位符 ${...}
 static void sub_arg(char *dest, const char *src, size_t dest_size,
                     const char *vname, const char *gdir, const char *adir,
-                    const char *aidx, const char *ndir, const char *cp,
-                    const char *uname, const char *uuid, const char *tok,
-                    const char *utype, const char *vtype) {
+                    const char *aidx, const char *ndir, const char *libdir,
+                    const char *cp, const char *uname, const char *uuid,
+                    const char *tok, const char *utype, const char *vtype) {
   dest[0] = '\0';
   size_t di = 0;
   const char *p = src;
@@ -343,6 +343,10 @@ static void sub_arg(char *dest, const char *src, size_t dest_size,
           val = vtype;
         else if (strcmp(key, "natives_directory") == 0)
           val = ndir;
+        else if (strcmp(key, "library_directory") == 0)
+          val = libdir;
+        else if (strcmp(key, "classpath_separator") == 0)
+          val = ":";
         else if (strcmp(key, "launcher_name") == 0)
           val = "tmcl";
         else if (strcmp(key, "launcher_version") == 0)
@@ -353,6 +357,18 @@ static void sub_arg(char *dest, const char *src, size_t dest_size,
           val = "0";
         else if (strcmp(key, "auth_xuid") == 0)
           val = "0";
+        else if (strcmp(key, "resolution_width") == 0)
+          val = "854";
+        else if (strcmp(key, "resolution_height") == 0)
+          val = "480";
+        else if (strcmp(key, "quickPlayPath") == 0)
+          val = "";
+        else if (strcmp(key, "quickPlaySingleplayer") == 0)
+          val = "";
+        else if (strcmp(key, "quickPlayMultiplayer") == 0)
+          val = "";
+        else if (strcmp(key, "quickPlayRealms") == 0)
+          val = "";
         else if (strcmp(key, "user_properties") == 0)
           val = "{}";
 
@@ -433,9 +449,9 @@ static cJSON *read_ver_json(const char *mcdir, const char *vname) {
 static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
                         char ***tofree, int *fc, const char *vname,
                         const char *gdir, const char *adir, const char *aidx,
-                        const char *ndir, const char *cp, const char *uname,
-                        const char *uuid, const char *tok, const char *utype,
-                        const char *vtype) {
+                        const char *ndir, const char *libdir, const char *cp,
+                        const char *uname, const char *uuid, const char *tok,
+                        const char *utype, const char *vtype) {
   if (!arr || !cJSON_IsArray(arr))
     return;
   cJSON *it;
@@ -444,9 +460,11 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
       break;
 
     if (cJSON_IsString(it)) {
-      char *buf = malloc(1024);
-      sub_arg(buf, it->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
-              uname, uuid, tok, utype, vtype);
+      // 用完整的 classpath 长度作为缓冲区大小，防止 ${classpath} 展开被截断
+      size_t buf_sz = 16384;
+      char *buf = malloc(buf_sz);
+      sub_arg(buf, it->valuestring, buf_sz, vname, gdir, adir, aidx, ndir, libdir,
+              cp, uname, uuid, tok, utype, vtype);
       args[(*ac)++] = buf;
       (*tofree)[(*fc)++] = buf;
     } else if (cJSON_IsObject(it)) {
@@ -457,9 +475,10 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
       if (!val)
         continue;
       if (cJSON_IsString(val)) {
-        char *buf = malloc(1024);
-        sub_arg(buf, val->valuestring, 1024, vname, gdir, adir, aidx, ndir, cp,
-                uname, uuid, tok, utype, vtype);
+        size_t buf_sz = 16384;
+        char *buf = malloc(buf_sz);
+        sub_arg(buf, val->valuestring, buf_sz, vname, gdir, adir, aidx, ndir,
+                libdir, cp, uname, uuid, tok, utype, vtype);
         args[(*ac)++] = buf;
         (*tofree)[(*fc)++] = buf;
       } else if (cJSON_IsArray(val)) {
@@ -468,9 +487,10 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
           if (*ac >= max_ac - 1)
             break;
           if (cJSON_IsString(vi)) {
-            char *buf = malloc(1024);
-            sub_arg(buf, vi->valuestring, 1024, vname, gdir, adir, aidx, ndir,
-                    cp, uname, uuid, tok, utype, vtype);
+            size_t buf_sz = 16384;
+            char *buf = malloc(buf_sz);
+            sub_arg(buf, vi->valuestring, buf_sz, vname, gdir, adir, aidx, ndir,
+                    libdir, cp, uname, uuid, tok, utype, vtype);
             args[(*ac)++] = buf;
             (*tofree)[(*fc)++] = buf;
           }
@@ -484,18 +504,19 @@ static void append_args(cJSON *arr, char **args, int *ac, int max_ac,
 static void legacy_args(const char *mc_args, char **args, int *ac, int max_ac,
                         char ***tofree, int *fc, const char *vname,
                         const char *gdir, const char *adir, const char *aidx,
-                        const char *ndir, const char *cp, const char *uname,
-                        const char *uuid, const char *tok, const char *utype,
-                        const char *vtype) {
+                        const char *ndir, const char *libdir, const char *cp,
+                        const char *uname, const char *uuid, const char *tok,
+                        const char *utype, const char *vtype) {
   if (!mc_args)
     return;
   char *dup = strdup(mc_args);
   char *saveptr;
   char *token = strtok_r(dup, " ", &saveptr);
   while (token && *ac < max_ac - 1) {
-    char *buf = malloc(1024);
-    sub_arg(buf, token, 1024, vname, gdir, adir, aidx, ndir, cp, uname, uuid,
-            tok, utype, vtype);
+    size_t buf_sz = 16384;
+    char *buf = malloc(buf_sz);
+    sub_arg(buf, token, buf_sz, vname, gdir, adir, aidx, ndir, libdir, cp,
+            uname, uuid, tok, utype, vtype);
     args[(*ac)++] = buf;
     (*tofree)[(*fc)++] = buf;
     token = strtok_r(NULL, " ", &saveptr);
@@ -599,6 +620,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   // ---- 路径 ----
   char assets_dir[256];
   snprintf(assets_dir, sizeof(assets_dir), "%s/assets", mcdir);
+  char lib_dir[512];
+  snprintf(lib_dir, sizeof(lib_dir), "%s/libraries", mcdir);
 
   // ---- 账户信息（从选中的账户读取，启动前刷新 token）----
   AccountInfo *acct =
@@ -727,8 +750,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     // 新版 arguments 格式
     cJSON *jvm = cJSON_GetObjectItem(args_obj, "jvm");
     append_args(jvm, args, &ac, 300, &tofree, &fc, vname, gdir, assets_dir,
-                asset_index, natives_dir, classpath, uname, uuid_str, token_str,
-                utype_str, vtype_str);
+                asset_index, natives_dir, lib_dir, classpath, uname, uuid_str,
+                token_str, utype_str, vtype_str);
 
     // authlib-injector / 离线皮肤（必须在 -cp 之前）
     if (skin_arg && ac < 300 - 4) {
@@ -765,8 +788,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     // 游戏参数
     cJSON *game = cJSON_GetObjectItem(args_obj, "game");
     append_args(game, args, &ac, 300, &tofree, &fc, vname, gdir, assets_dir,
-                asset_index, natives_dir, classpath, uname, uuid_str, token_str,
-                utype_str, vtype_str);
+                asset_index, natives_dir, lib_dir, classpath, uname, uuid_str,
+                token_str, utype_str, vtype_str);
   } else {
     // 旧版格式：使用 minecraftArguments
     const char *mc_args = NULL;
@@ -812,8 +835,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
 
     if (mc_args) {
       legacy_args(mc_args, args, &ac, 300, &tofree, &fc, vname, gdir,
-                  assets_dir, asset_index, natives_dir, classpath, uname,
-                  uuid_str, token_str, utype_str, vtype_str);
+                  assets_dir, asset_index, natives_dir, lib_dir, classpath,
+                  uname, uuid_str, token_str, utype_str, vtype_str);
     } else {
       // 最简回退
       args[ac++] = "--username";

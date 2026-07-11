@@ -52,3 +52,7 @@ Mkfile.old
 dkms.conf
 tmcl
 scan_src.sh
+count_lines.sh
+CLAUDE.md
+.claude
+logs/

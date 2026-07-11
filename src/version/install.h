@@ -19,4 +19,20 @@ typedef struct {
 // 安装页面主函数
 void install_page(VersionState *vstate, ConfigState *cstate);
 
+// Forge/NeoForge 统一配置
+typedef struct {
+  const char *maven_base;    // "maven.minecraftforge.net" / "maven.neoforged.net"
+  const char *group_id;      // "net.minecraftforge" / "net.neoforged"
+  const char *artifact_id;   // "forge" / "neoforge"
+  int has_promotions;        // forge=1, neoforge=0
+} ForgeConfig;
+
+// Forge/NeoForge 安装主函数（在 install.c 中实现）
+// forge_version: 预先选定的版本号，非空时跳过版本选择 Phase 0
+void do_forge_install(ConfigState *cstate, const char *mc_version,
+                      const char *vanilla_url, const char *custom_name,
+                      const char *modloader, const char *type,
+                      const ForgeConfig *fcfg,
+                      const char *forge_version);
+
 #endif
