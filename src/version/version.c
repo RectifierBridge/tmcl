@@ -18,6 +18,20 @@
 char *classpath_from_json(VersionState *state, char *minecraft_dir);
 void bottom_bar(int *middlep);
 
+// 返回模组加载器对应的颜色对编号
+// 未选中: forge=1  neoforge=2  fabric=3  quilt=4
+// 选中 (配合 A_REVERSE): forge=6  neoforge=7  fabric=8  quilt=9
+// vanilla always 0, highlighted by A_REVERSE alone
+int modloader_color(const char *modloader, int selected) {
+  int base = 0;
+  if (strcmp(modloader, "forge") == 0)    base = 1;
+  if (strcmp(modloader, "neoforge") == 0) base = 2;
+  if (strcmp(modloader, "fabric") == 0)   base = 3;
+  if (strcmp(modloader, "quilt") == 0)    base = 4;
+  if (base == 0) return 0;
+  return selected ? base + 5 : base;
+}
+
 // 初始化版本数据
 void init_versions(VersionState *state, ConfigState *ConfigState) {
   state->version_count = 0;
@@ -1106,14 +1120,20 @@ static void check_complete(VersionState *state, int index,
           char *group = strtok_r(ns, ":", &sp);
           char *artifact = strtok_r(NULL, ":", &sp);
           char *version = strtok_r(NULL, ":", &sp);
+          char *classifier = strtok_r(NULL, ":", &sp);
           if (group && artifact && version) {
             char gp[256];
             snprintf(gp, sizeof(gp), "%s", group);
             for (char *p = gp; *p; p++)
               if (*p == '.') *p = '/';
-            snprintf(lib_path, sizeof(lib_path),
-                     "%s/libraries/%s/%s/%s/%s-%s.jar", mcdir, gp, artifact,
-                     version, artifact, version);
+            if (classifier)
+              snprintf(lib_path, sizeof(lib_path),
+                       "%s/libraries/%s/%s/%s/%s-%s-%s.jar", mcdir, gp,
+                       artifact, version, artifact, version, classifier);
+            else
+              snprintf(lib_path, sizeof(lib_path),
+                       "%s/libraries/%s/%s/%s/%s-%s.jar", mcdir, gp, artifact,
+                       version, artifact, version);
           }
           free(ns);
         }
@@ -1419,10 +1439,13 @@ void version_page(int ch, int *middlep, VersionState *state,
      strcpy(pin, "*");
     }
     // 显示版本信息：pin否、类型、模组加载器、版本号、名字
-    printw("%s %-7s %-9s %-9s %s", pin, state->versions[i].type,
-           state->versions[i].modloader, state->versions[i].version,
-           state->versions[i].name);
-
+    // 显示版本信息：pin否、类型、模组加载器、版本号、名字
+    printw("%s %-7s ", pin, state->versions[i].type);
+    int mc = modloader_color(state->versions[i].modloader, (i == state->selected_version));
+    if (mc) { attron(COLOR_PAIR(mc)); }
+    printw("%-9s", state->versions[i].modloader);
+    if (mc) { attroff(COLOR_PAIR(mc)); }
+    printw(" %-9s %s", state->versions[i].version, state->versions[i].name);
     if (i == state->selected_version) {
       attroff(A_REVERSE);
     }
@@ -1525,6 +1548,7 @@ void append_json_libraries(const char *minecraft_dir, const char *version_name,
         char *group = strtok_r(name_str, ":", &saveptr);
         char *artifact = strtok_r(NULL, ":", &saveptr);
         char *version = strtok_r(NULL, ":", &saveptr);
+        char *classifier = strtok_r(NULL, ":", &saveptr);
 
         if (group && artifact && version) {
           // 将 group 中的 '.' 替换为 '/'（Maven 路径格式）
@@ -1536,7 +1560,12 @@ void append_json_libraries(const char *minecraft_dir, const char *version_name,
           }
 
           char lib_path[512];
-          snprintf(lib_path, sizeof(lib_path),
+          if (classifier)
+            snprintf(lib_path, sizeof(lib_path),
+                   "%s/libraries/%s/%s/%s/%s-%s-%s.jar", minecraft_dir,
+                   group_path, artifact, version, artifact, version, classifier);
+          else
+            snprintf(lib_path, sizeof(lib_path),
                    "%s/libraries/%s/%s/%s/%s-%s.jar", minecraft_dir, group_path,
                    artifact, version, artifact, version);
 

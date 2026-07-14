@@ -35,6 +35,7 @@ void free_versions(VersionState *state);
 void rename_version(VersionState *state, int index, ConfigState *ConfigState);
 void choose_version(VersionState *state, int index);
 void start_version(VersionState *state, int index);
+int modloader_color(const char *modloader, int selected);
 void new_version(VersionState *state, ConfigState *ConfigState);
 void delete_version(VersionState *state, int index, ConfigState *ConfigState);
 void begin_version(VersionState *state, ConfigState *ConfigState);

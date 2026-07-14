@@ -1238,8 +1238,8 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
         }
 
         if (classifier) {
-          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s.%s",
-                   mcdir, gp, artifact, version, artifact,
+          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s-%s.%s",
+                   mcdir, gp, artifact, version, artifact, version,
                    classifier, ext);
         } else {
           asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s.%s",
