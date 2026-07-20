@@ -1280,9 +1280,11 @@ void version_config_page(VersionState *state, int index,
     switch (ch) {
     case 'q': goto done;
     case 'j':
+    case KEY_DOWN:
       if (sel < 5) sel++;
       break;
     case 'k':
+    case KEY_UP:
       if (sel > 0) sel--;
       break;
     case '\n':
@@ -1351,6 +1353,7 @@ void version_page(int ch, int *middlep, VersionState *state,
   // 处理版本选择导航
   switch (ch) {
   case 'j': // 向下选择版本
+    case KEY_DOWN:
     if (state->selected_version < state->version_count - 1) {
       state->selected_version++;
       int visible_rows = row - 10;
@@ -1360,6 +1363,7 @@ void version_page(int ch, int *middlep, VersionState *state,
     }
     break;
   case 'k': // 向上选择版本
+    case KEY_UP:
     if (state->selected_version > 0) {
       state->selected_version--;
       if (state->selected_version < state->scroll_offset) {
@@ -1388,9 +1392,11 @@ void version_page(int ch, int *middlep, VersionState *state,
     *middlep = 4;
     break;
   case 'h':                        // 在操作间向左移动
+  case KEY_LEFT:
     *middlep = (*middlep + 4) % 5;
     break;
   case 'l':                        // 在操作间向右移动
+  case KEY_RIGHT:
     *middlep = (*middlep + 1) % 5;
     break;
   case '\n': // 回车键执行当前操作

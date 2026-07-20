@@ -81,9 +81,11 @@ void home_page(int ch, int *middlep, HomeState *state,
   // key
   switch (ch) {
   case 'j':
+  case KEY_DOWN:
     state->selected = 1;
     break;
   case 'k':
+  case KEY_UP:
     state->selected = 0;
     break;
   case 'b':
@@ -135,5 +137,12 @@ void home_page(int ch, int *middlep, HomeState *state,
   if (state->selected == 1) {
     attroff(A_REVERSE);
   }
+  mvprintw(row - 2, 0,
+           "                                                                   "
+           "                                                                   "
+           "                                                                   "
+           "                                                                   "
+           "                                                                   "
+           "                                                  ");
   mvprintw(row - 1, 0, "tap [Enter] or [b] to begin");
 }

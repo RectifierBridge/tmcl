@@ -737,6 +737,7 @@ void account_page(int ch, int *middlep, AccountState *state) {
   // 处理输入
   switch (ch) {
   case 'j':
+    case KEY_DOWN:
     if (state->selected_account < state->account_count - 1) {
       state->selected_account++;
       int visible = row - 10;
@@ -745,6 +746,7 @@ void account_page(int ch, int *middlep, AccountState *state) {
     }
     break;
   case 'k':
+    case KEY_UP:
     if (state->selected_account > 0) {
       state->selected_account--;
       if (state->selected_account < state->scroll_offset)
@@ -779,9 +781,11 @@ void account_page(int ch, int *middlep, AccountState *state) {
     *middlep = 3;
     break;
   case 'h':
+  case KEY_LEFT:
     *middlep = (*middlep + 3) % 4;
     break;
   case 'l':
+  case KEY_RIGHT:
     *middlep = (*middlep + 1) % 4;
     break;
   case '\n':

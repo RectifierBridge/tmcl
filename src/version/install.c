@@ -2,33 +2,34 @@
 // install.c — 安装新游戏版本
 #include "install.h"
 #include <cjson/cJSON.h>
+#include <errno.h>
 #include <ncurses.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <signal.h>
 #include <sys/wait.h>
-#include <errno.h>
+#include <unistd.h>
 
-#define MANIFEST_URL "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+#define MANIFEST_URL                                                           \
+  "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 #define MAX_VERSIONS 2000
 #define MAX_RETRIES 2
 
 static const ForgeConfig FORGE_CFG = {
-  .maven_base = "maven.minecraftforge.net",
-  .group_id   = "net.minecraftforge",
-  .artifact_id = "forge",
-  .has_promotions = 1,
+    .maven_base = "maven.minecraftforge.net",
+    .group_id = "net.minecraftforge",
+    .artifact_id = "forge",
+    .has_promotions = 1,
 };
 
 static const ForgeConfig NEOFORGE_CFG = {
-  .maven_base = "maven.neoforged.net/releases",
-  .group_id   = "net.neoforged",
-  .artifact_id = "neoforge",
-  .has_promotions = 0,
+    .maven_base = "maven.neoforged.net/releases",
+    .group_id = "net.neoforged",
+    .artifact_id = "neoforge",
+    .has_promotions = 0,
 };
 
 static volatile sig_atomic_t g_cancel = 0;
@@ -58,12 +59,15 @@ static int get_jar_main_class(const char *jar_path, char *out, size_t out_size);
 
 // 判断 MC 版本是否为旧版 Forge（minor ≤ 12）
 static int is_legacy_forge(const char *mc_version) {
-  if (!mc_version) return 0;
+  if (!mc_version)
+    return 0;
   const char *dot1 = strchr(mc_version, '.');
-  if (!dot1) return 0;
+  if (!dot1)
+    return 0;
   const char *dot2 = strchr(dot1 + 1, '.');
   size_t len = dot2 ? (size_t)(dot2 - dot1 - 1) : strlen(dot1 + 1);
-  if (len == 0 || len > 4) return 0;
+  if (len == 0 || len > 4)
+    return 0;
   char minor[8];
   memcpy(minor, dot1 + 1, len);
   minor[len] = '\0';
@@ -79,16 +83,24 @@ static int pick_modloader(int cur) {
     getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select mod loader:");
     for (int i = 0; i < 4; i++) {
-      if (i == sel) attron(A_REVERSE);
+      if (i == sel)
+        attron(A_REVERSE);
       mvprintw(4 + i, 6, "%s", opts[i]);
-      if (i == sel) attroff(A_REVERSE);
+      if (i == sel)
+        attroff(A_REVERSE);
     }
     mvprintw(10, 4, "j/k: move  Enter: confirm  q: cancel");
     int c = getch();
-    if (c == 'j' && sel < 3) sel++;
-    if (c == 'k' && sel > 0) sel--;
-    if (c == '\n') break;
-    if (c == 'q') { sel = cur; break; }
+    if (c == 'j' || c == KEY_DOWN && sel < 3)
+      sel++;
+    if (c == 'k' || c == KEY_UP && sel > 0)
+      sel--;
+    if (c == '\n')
+      break;
+    if (c == 'q') {
+      sel = cur;
+      break;
+    }
   }
   clear();
   return sel;
@@ -98,8 +110,8 @@ static int pick_modloader(int cur) {
 void install_page(VersionState *vstate, ConfigState *cstate) {
   InstallState s;
   memset(&s, 0, sizeof(s));
-  s.selected_row = 1;           // 默认光标在 version 行
-  s.type_sel = 0;               // 0=release, 1=snapshot, 2=old_beta, 3=old_alpha
+  s.selected_row = 1; // 默认光标在 version 行
+  s.type_sel = 0;     // 0=release, 1=snapshot, 2=old_beta, 3=old_alpha
 
   const char *types[] = {"release", "snapshot", "old_beta", "old_alpha"};
   const char *modloaders[] = {"vanilla", "fabric", "forge", "neoforge"};
@@ -126,9 +138,11 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
     // 菜单项：Type, Version, Mod Loader, Name
     const char *labels[] = {"Type", "Version", "Mod Loader", "Name"};
     char display_ver[64] = "-- select --";
-    if (selected_version[0]) snprintf(display_ver, sizeof(display_ver), "%s", selected_version);
+    if (selected_version[0])
+      snprintf(display_ver, sizeof(display_ver), "%s", selected_version);
     char display_name[64] = "-- enter name --";
-    if (user_name[0]) snprintf(display_name, sizeof(display_name), "%s", user_name);
+    if (user_name[0])
+      snprintf(display_name, sizeof(display_name), "%s", user_name);
     char display_type[32];
     snprintf(display_type, sizeof(display_type), "%s", types[s.type_sel]);
 
@@ -136,23 +150,32 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
 
     int start_y = 4;
     for (int i = 0; i < 4; i++) {
-      if (i == s.selected_row) attron(A_REVERSE);
+      if (i == s.selected_row)
+        attron(A_REVERSE);
       mvprintw(start_y + i * 2, 4, "  %-12s: %s", labels[i], values[i]);
-      if (i == s.selected_row) attroff(A_REVERSE);
+      if (i == s.selected_row)
+        attroff(A_REVERSE);
     }
     mvprintw(start_y + 8, 4, "  %-12s  %s", "", "");
-    if (s.selected_row == 4) attron(A_REVERSE);
+    if (s.selected_row == 4)
+      attron(A_REVERSE);
     mvprintw(start_y + 8, 6, "[ start installation ]");
-    if (s.selected_row == 4) attroff(A_REVERSE);
+    if (s.selected_row == 4)
+      attroff(A_REVERSE);
 
     int ch = getch();
     switch (ch) {
-    case 'q': goto quit;
+    case 'q':
+      goto quit;
     case 'j':
-      if (s.selected_row < 4) s.selected_row++;
+    case KEY_DOWN:
+      if (s.selected_row < 4)
+        s.selected_row++;
       break;
     case 'k':
-      if (s.selected_row > 0) s.selected_row--;
+    case KEY_UP:
+      if (s.selected_row > 0)
+        s.selected_row--;
       break;
     case '\n':
       switch (s.selected_row) {
@@ -208,7 +231,8 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
           char **lvers = fabric_loader_versions(selected_version, &lcount);
           if (lvers && lcount > 0) {
             fabric_loader_ver = pick_fabric_loader(lvers, lcount);
-            for (int i = 0; i < lcount; i++) free(lvers[i]);
+            for (int i = 0; i < lcount; i++)
+              free(lvers[i]);
             free(lvers);
           }
           if (!fabric_loader_ver) {
@@ -227,10 +251,10 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
           char gpath[256];
           snprintf(gpath, sizeof(gpath), "%s", pick_fcfg->group_id);
           for (char *pp = gpath; *pp; pp++)
-            if (*pp == '.') *pp = '/';
+            if (*pp == '.')
+              *pp = '/';
           char murl[1024];
-          snprintf(murl, sizeof(murl),
-                   "https://%s/%s/%s/maven-metadata.xml",
+          snprintf(murl, sizeof(murl), "https://%s/%s/%s/maven-metadata.xml",
                    pick_fcfg->maven_base, gpath, pick_fcfg->artifact_id);
           char fetch_cmd[1536];
           snprintf(fetch_cmd, sizeof(fetch_cmd),
@@ -246,14 +270,14 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
                 fread(mdata, 1, msz, mf);
                 mdata[msz] = '\0';
                 int fcount = 0;
-                char **fvers = parse_maven_xml(mdata, selected_version,
-                                               &fcount,
-                                               /*neoforge_mode=*/(modloader_sel == 3),
-                                               types[s.type_sel]);
+                char **fvers = parse_maven_xml(
+                    mdata, selected_version, &fcount,
+                    /*neoforge_mode=*/(modloader_sel == 3), types[s.type_sel]);
                 free(mdata);
                 if (fvers && fcount > 0) {
                   forge_ver = pick_forge_version(fvers, fcount, pick_fcfg);
-                  for (int i = 0; i < fcount; i++) free(fvers[i]);
+                  for (int i = 0; i < fcount; i++)
+                    free(fvers[i]);
                   free(fvers);
                 }
               }
@@ -294,9 +318,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
         }
         break;
       }
-      break;
-    case 'h':
-      if (s.selected_row < 4) s.selected_row = 4; // jump to install
+      s.selected_row++;
       break;
     }
   }
@@ -335,16 +357,24 @@ static int pick_type(int cur) {
     getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select version type:");
     for (int i = 0; i < 4; i++) {
-      if (i == sel) attron(A_REVERSE);
+      if (i == sel)
+        attron(A_REVERSE);
       mvprintw(4 + i, 6, "%s", opts[i]);
-      if (i == sel) attroff(A_REVERSE);
+      if (i == sel)
+        attroff(A_REVERSE);
     }
     mvprintw(10, 4, "j/k: move  Enter: confirm  q: cancel");
     int c = getch();
-    if (c == 'j' && sel < 3) sel++;
-    if (c == 'k' && sel > 0) sel--;
-    if (c == '\n') break;
-    if (c == 'q') { sel = cur; break; }
+    if (c == 'j' || c == KEY_DOWN && sel < 3)
+      sel++;
+    if (c == 'k' || c == KEY_UP && sel > 0)
+      sel--;
+    if (c == '\n')
+      break;
+    if (c == 'q') {
+      sel = cur;
+      break;
+    }
   }
   clear();
   return sel;
@@ -356,24 +386,29 @@ static int fetch_versions(InstallState *s, const char *type_filter) {
 
   const char *tmp = "/tmp/tmcl_manifest.json";
   char cmd[1024];
-  snprintf(cmd, sizeof(cmd),
-           "curl -s -L -o \"%s\" \"" MANIFEST_URL "\"", tmp);
-  if (system(cmd) != 0) return 0;
+  snprintf(cmd, sizeof(cmd), "curl -s -L -o \"%s\" \"" MANIFEST_URL "\"", tmp);
+  if (system(cmd) != 0)
+    return 0;
 
   FILE *f = fopen(tmp, "r");
-  if (!f) return 0;
+  if (!f)
+    return 0;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
   fseek(f, 0, SEEK_SET);
   char *data = malloc(sz + 1);
-  if (!data) { fclose(f); return 0; }
+  if (!data) {
+    fclose(f);
+    return 0;
+  }
   fread(data, 1, sz, f);
   data[sz] = '\0';
   fclose(f);
 
   cJSON *root = cJSON_Parse(data);
   free(data);
-  if (!root) return 0;
+  if (!root)
+    return 0;
 
   cJSON *versions = cJSON_GetObjectItem(root, "versions");
   if (!versions || !cJSON_IsArray(versions)) {
@@ -388,7 +423,8 @@ static int fetch_versions(InstallState *s, const char *type_filter) {
     cJSON *t = cJSON_GetObjectItem(v, "type");
     if (t && cJSON_IsString(t) && strcmp(t->valuestring, type_filter) == 0)
       count++;
-    if (count >= MAX_VERSIONS) break;
+    if (count >= MAX_VERSIONS)
+      break;
   }
 
   if (count == 0) {
@@ -415,7 +451,8 @@ static int fetch_versions(InstallState *s, const char *type_filter) {
       s->version_urls[idx] = strdup(url->valuestring);
       idx++;
     }
-    if (idx >= count) break;
+    if (idx >= count)
+      break;
   }
   s->versions_count = count;
   cJSON_Delete(root);
@@ -432,25 +469,37 @@ static int pick_version(InstallState *s) {
     getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select version (%d available):", s->versions_count);
     int max_disp = row - 6;
-    if (sel < scroll) scroll = sel;
-    if (sel >= scroll + max_disp) scroll = sel - max_disp + 1;
-    if (scroll < 0) scroll = 0;
+    if (sel < scroll)
+      scroll = sel;
+    if (sel >= scroll + max_disp)
+      scroll = sel - max_disp + 1;
+    if (scroll < 0)
+      scroll = 0;
 
     for (int i = scroll; i < s->versions_count && i < scroll + max_disp; i++) {
-      if (i == sel) attron(A_REVERSE);
+      if (i == sel)
+        attron(A_REVERSE);
       mvprintw(4 + i - scroll, 6, "%s", s->version_list[i]);
-      if (i == sel) attroff(A_REVERSE);
+      if (i == sel)
+        attroff(A_REVERSE);
     }
-    if (scroll > 0) mvprintw(3, 6, "... more above ...");
+    if (scroll > 0)
+      mvprintw(3, 6, "... more above ...");
     if (scroll + max_disp < s->versions_count)
       mvprintw(4 + max_disp, 6, "... more below ...");
     mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
 
     int c = getch();
-    if (c == 'j' && sel < s->versions_count - 1) sel++;
-    if (c == 'k' && sel > 0) sel--;
-    if (c == '\n') break;
-    if (c == 'q') { sel = -1; break; }
+    if (c == 'j' || c == KEY_DOWN && sel < s->versions_count - 1)
+      sel++;
+    if (c == 'k' || c == KEY_UP && sel > 0)
+      sel--;
+    if (c == '\n')
+      break;
+    if (c == 'q') {
+      sel = -1;
+      break;
+    }
   }
   clear();
   s->version_sel = (sel >= 0) ? sel : 0;
@@ -525,9 +574,8 @@ static int dl_one(const char *url, const char *dest, const char *label) {
     return 1;
   }
   if (pid == 0) {
-    execlp("curl", "curl", "-s", "-L", "--connect-timeout", "15",
-           "--max-time", "120", "--fail", "--show-error", "-o", dest, url,
-           (char *)NULL);
+    execlp("curl", "curl", "-s", "-L", "--connect-timeout", "15", "--max-time",
+           "120", "--fail", "--show-error", "-o", dest, url, (char *)NULL);
     _exit(1);
   }
 
@@ -542,14 +590,21 @@ static int dl_one(const char *url, const char *dest, const char *label) {
     }
     pid_t r = waitpid(pid, &status, WNOHANG);
     if (r < 0) {
-      if (errno == EINTR) continue;
+      if (errno == EINTR)
+        continue;
       break;
     }
-    if (r > 0) { done = 1; break; }
+    if (r > 0) {
+      done = 1;
+      break;
+    }
     usleep(100000); // 100ms
   }
 
-  if (!done) { printf("  \033[31mWAIT\033[0m %s\n", label); return 1; }
+  if (!done) {
+    printf("  \033[31mWAIT\033[0m %s\n", label);
+    return 1;
+  }
 
   if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
     // 对 .jar 文件验证 zip 完整性
@@ -559,16 +614,20 @@ static int dl_one(const char *url, const char *dest, const char *label) {
       int valid = 0;
       if (vf) {
         unsigned char magic[2];
-        if (fread(magic, 1, 2, vf) == 2 && magic[0]=='P' && magic[1]=='K') {
+        if (fread(magic, 1, 2, vf) == 2 && magic[0] == 'P' && magic[1] == 'K') {
           fseek(vf, -22, SEEK_END);
           unsigned char end[4];
-          if (fread(end, 1, 4, vf) == 4 &&
-              end[0]==0x50 && end[1]==0x4b && end[2]==0x05 && end[3]==0x06)
+          if (fread(end, 1, 4, vf) == 4 && end[0] == 0x50 && end[1] == 0x4b &&
+              end[2] == 0x05 && end[3] == 0x06)
             valid = 1;
         }
         fclose(vf);
       }
-      if (!valid) { remove(dest); printf("  \033[31mCORRUPT\033[0m %s\n", label); return 1; }
+      if (!valid) {
+        remove(dest);
+        printf("  \033[31mCORRUPT\033[0m %s\n", label);
+        return 1;
+      }
     }
     printf("  \033[32mOK\033[0m  %s\n", label);
     return 0;
@@ -596,13 +655,15 @@ static void *dl_worker(void *arg) {
 }
 
 static void dl_parallel(DlTask *tasks, int count, int num_threads) {
-  if (count <= 0 || num_threads < 1) return;
+  if (count <= 0 || num_threads < 1)
+    return;
   g_tasks = tasks;
   g_task_count = count;
   g_task_idx = 0;
 
   int nth = num_threads;
-  if (nth > count) nth = count;
+  if (nth > count)
+    nth = count;
   pthread_t *threads = malloc(nth * sizeof(pthread_t));
   for (int i = 0; i < nth; i++)
     pthread_create(&threads[i], NULL, dl_worker, NULL);
@@ -613,7 +674,8 @@ static void dl_parallel(DlTask *tasks, int count, int num_threads) {
 
 // ---- library rules 检查（支持多条 rules，正确处理 allow/disallow）----
 static int lib_rules_ok(cJSON *rules) {
-  if (!rules || !cJSON_IsArray(rules)) return 1; // 无规则 → 全平台
+  if (!rules || !cJSON_IsArray(rules))
+    return 1;      // 无规则 → 全平台
   int allowed = 0; // 默认不允许
   cJSON *rule;
   cJSON_ArrayForEach(rule, rules) {
@@ -623,14 +685,18 @@ static int lib_rules_ok(cJSON *rules) {
 
     if (!os && !features) {
       // 全局规则
-      if (action && strcmp(action->valuestring, "allow") == 0) allowed = 1;
-      if (action && strcmp(action->valuestring, "disallow") == 0) allowed = 0;
+      if (action && strcmp(action->valuestring, "allow") == 0)
+        allowed = 1;
+      if (action && strcmp(action->valuestring, "disallow") == 0)
+        allowed = 0;
     } else if (os && !features) {
       cJSON *os_name = cJSON_GetObjectItem(os, "name");
       if (os_name && cJSON_IsString(os_name) &&
           strcmp(os_name->valuestring, "linux") == 0) {
-        if (action && strcmp(action->valuestring, "allow") == 0) allowed = 1;
-        if (action && strcmp(action->valuestring, "disallow") == 0) allowed = 0;
+        if (action && strcmp(action->valuestring, "allow") == 0)
+          allowed = 1;
+        if (action && strcmp(action->valuestring, "disallow") == 0)
+          allowed = 0;
       }
     }
     // features 规则 → 忽略（TMCL 不支持自定义分辨率/demo 等特性）
@@ -662,7 +728,8 @@ static int build_lib_task(DlTask *t, cJSON *lib, const char *mcdir) {
 
   // 无 downloads → 从 name 构建 maven 路径
   cJSON *name = cJSON_GetObjectItem(lib, "name");
-  if (!name || !cJSON_IsString(name)) return 0;
+  if (!name || !cJSON_IsString(name))
+    return 0;
 
   char *ns = strdup(name->valuestring);
   char *sp;
@@ -670,23 +737,33 @@ static int build_lib_task(DlTask *t, cJSON *lib, const char *mcdir) {
   char *artifact = strtok_r(NULL, ":", &sp);
   char *version = strtok_r(NULL, ":", &sp);
   char *classifier = strtok_r(NULL, ":", &sp); // 可能为 NULL
-  if (!group || !artifact || !version) { free(ns); return 0; }
+  if (!group || !artifact || !version) {
+    free(ns);
+    return 0;
+  }
 
   // 处理 @ext 后缀（如 classifier@zip, version@jar）
   char ext[16] = "jar";
   {
     char *at_sign = strchr(version, '@');
-    if (at_sign) { snprintf(ext, sizeof(ext), "%s", at_sign + 1); *at_sign = '\0'; }
+    if (at_sign) {
+      snprintf(ext, sizeof(ext), "%s", at_sign + 1);
+      *at_sign = '\0';
+    }
     if (classifier) {
       at_sign = strchr(classifier, '@');
-      if (at_sign) { snprintf(ext, sizeof(ext), "%s", at_sign + 1); *at_sign = '\0'; }
+      if (at_sign) {
+        snprintf(ext, sizeof(ext), "%s", at_sign + 1);
+        *at_sign = '\0';
+      }
     }
   }
 
   char gp[256];
   snprintf(gp, sizeof(gp), "%s", group);
   for (char *p = gp; *p; p++)
-    if (*p == '.') *p = '/';
+    if (*p == '.')
+      *p = '/';
 
   // 优先用 library 自带的 url（Fabric/Forge 等在自有 maven 上），
   // 否则回退到 Mojang 官方 maven
@@ -703,17 +780,15 @@ static int build_lib_task(DlTask *t, cJSON *lib, const char *mcdir) {
   }
 
   if (classifier) {
-    snprintf(t->url, sizeof(t->url),
-             "%s%s/%s/%s/%s-%s-%s.%s", base_url, gp, artifact,
-             version, artifact, version, classifier, ext);
-    snprintf(t->dest, sizeof(t->dest), "%s/libraries/%s/%s/%s/%s-%s-%s.%s", mcdir,
-             gp, artifact, version, artifact, version, classifier, ext);
+    snprintf(t->url, sizeof(t->url), "%s%s/%s/%s/%s-%s-%s.%s", base_url, gp,
+             artifact, version, artifact, version, classifier, ext);
+    snprintf(t->dest, sizeof(t->dest), "%s/libraries/%s/%s/%s/%s-%s-%s.%s",
+             mcdir, gp, artifact, version, artifact, version, classifier, ext);
     snprintf(t->label, sizeof(t->label), "%s:%s:%s:%s", group, artifact,
              version, classifier);
   } else {
-    snprintf(t->url, sizeof(t->url),
-             "%s%s/%s/%s/%s-%s.%s", base_url, gp, artifact,
-             version, artifact, version, ext);
+    snprintf(t->url, sizeof(t->url), "%s%s/%s/%s/%s-%s.%s", base_url, gp,
+             artifact, version, artifact, version, ext);
     snprintf(t->dest, sizeof(t->dest), "%s/libraries/%s/%s/%s/%s-%s.%s", mcdir,
              gp, artifact, version, artifact, version, ext);
     snprintf(t->label, sizeof(t->label), "%s:%s:%s", group, artifact, version);
@@ -726,7 +801,8 @@ static int build_lib_task(DlTask *t, cJSON *lib, const char *mcdir) {
 // ---- 收集失败任务并进行重试 ----
 static int retry_failed(DlTask *tasks, int count, int num_threads,
                         char ***failed_names, int *failed_count) {
-  if (g_cancel) return 0;
+  if (g_cancel)
+    return 0;
   // 第一遍：收集失败的任务
   DlTask *retry = malloc(count * sizeof(DlTask));
   int rcount = 0;
@@ -736,9 +812,15 @@ static int retry_failed(DlTask *tasks, int count, int num_threads,
       rcount++;
     }
   }
-  if (rcount == 0) { free(retry); return 0; }
+  if (rcount == 0) {
+    free(retry);
+    return 0;
+  }
   printf("\n  Retrying %d failed file(s)...\n\n", rcount);
-  if (g_cancel) { free(retry); return 0; }
+  if (g_cancel) {
+    free(retry);
+    return 0;
+  }
   dl_parallel(retry, rcount, num_threads);
 
   // 回写结果
@@ -748,7 +830,8 @@ static int retry_failed(DlTask *tasks, int count, int num_threads,
       tasks[i].result = retry[ri].result;
       ri++;
     }
-    if (tasks[i].result != 0) still_failed++;
+    if (tasks[i].result != 0)
+      still_failed++;
   }
 
   // 收集最终失败的名字
@@ -765,7 +848,8 @@ static int retry_failed(DlTask *tasks, int count, int num_threads,
   return still_failed;
 }
 
-// 获取所有可用的 Fabric Loader 版本列表（返回 strdup 的字符串数组，调用者负责释放）
+// 获取所有可用的 Fabric Loader 版本列表（返回 strdup
+// 的字符串数组，调用者负责释放）
 static char **fabric_loader_versions(const char *mc_version, int *count_out) {
   *count_out = 0;
   char cmd[1024];
@@ -773,34 +857,47 @@ static char **fabric_loader_versions(const char *mc_version, int *count_out) {
            "curl -sL -o /tmp/tmcl_fabric_loaders.json "
            "'https://meta.fabricmc.net/v2/versions/loader/%s'",
            mc_version);
-  if (system(cmd) != 0) return NULL;
+  if (system(cmd) != 0)
+    return NULL;
 
   FILE *f = fopen("/tmp/tmcl_fabric_loaders.json", "r");
-  if (!f) return NULL;
+  if (!f)
+    return NULL;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
   fseek(f, 0, SEEK_SET);
   char *data = malloc(sz + 1);
-  if (!data) { fclose(f); return NULL; }
+  if (!data) {
+    fclose(f);
+    return NULL;
+  }
   fread(data, 1, sz, f);
   data[sz] = '\0';
   fclose(f);
 
   cJSON *arr = cJSON_Parse(data);
   free(data);
-  if (!arr || !cJSON_IsArray(arr)) { cJSON_Delete(arr); return NULL; }
+  if (!arr || !cJSON_IsArray(arr)) {
+    cJSON_Delete(arr);
+    return NULL;
+  }
 
   int total = cJSON_GetArraySize(arr);
-  if (total == 0) { cJSON_Delete(arr); return NULL; }
+  if (total == 0) {
+    cJSON_Delete(arr);
+    return NULL;
+  }
 
   char **versions = malloc(total * sizeof(char *));
   int idx = 0;
   for (int i = 0; i < total; i++) {
     cJSON *item = cJSON_GetArrayItem(arr, i);
     cJSON *loader = cJSON_GetObjectItem(item, "loader");
-    if (!loader) continue;
+    if (!loader)
+      continue;
     cJSON *ver = cJSON_GetObjectItem(loader, "version");
-    if (!ver || !cJSON_IsString(ver)) continue;
+    if (!ver || !cJSON_IsString(ver))
+      continue;
     versions[idx++] = strdup(ver->valuestring);
   }
   cJSON_Delete(arr);
@@ -817,25 +914,37 @@ static char *pick_fabric_loader(char **versions, int count) {
     getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select Fabric Loader version (%d available):", count);
     int max_disp = row - 6;
-    if (sel < scroll) scroll = sel;
-    if (sel >= scroll + max_disp) scroll = sel - max_disp + 1;
-    if (scroll < 0) scroll = 0;
+    if (sel < scroll)
+      scroll = sel;
+    if (sel >= scroll + max_disp)
+      scroll = sel - max_disp + 1;
+    if (scroll < 0)
+      scroll = 0;
 
     for (int i = scroll; i < count && i < scroll + max_disp; i++) {
-      if (i == sel) attron(A_REVERSE);
+      if (i == sel)
+        attron(A_REVERSE);
       mvprintw(4 + i - scroll, 6, "%s", versions[i]);
-      if (i == sel) attroff(A_REVERSE);
+      if (i == sel)
+        attroff(A_REVERSE);
     }
-    if (scroll > 0) mvprintw(3, 6, "... more above ...");
+    if (scroll > 0)
+      mvprintw(3, 6, "... more above ...");
     if (scroll + max_disp < count)
       mvprintw(4 + max_disp, 6, "... more below ...");
     mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
 
     int c = getch();
-    if (c == 'j' && sel < count - 1) sel++;
-    if (c == 'k' && sel > 0) sel--;
-    if (c == '\n') break;
-    if (c == 'q') { clear(); return NULL; }
+    if (c == 'j' || c == KEY_DOWN && sel < count - 1)
+      sel++;
+    if (c == 'k' || c == KEY_UP && sel > 0)
+      sel--;
+    if (c == '\n')
+      break;
+    if (c == 'q') {
+      clear();
+      return NULL;
+    }
   }
   clear();
   return strdup(versions[sel]);
@@ -863,14 +972,16 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
                               int *count_out, int neoforge_mode,
                               const char *mc_type) {
   *count_out = 0;
-  if (!xml_data || !mc_version) return NULL;
+  if (!xml_data || !mc_version)
+    return NULL;
 
   // 动态数组：边扫描边收集匹配的版本
   int cap = 0;
   char **result = NULL;
   const char *p = xml_data;
   char prefix[64];
-  char suffix_filter[32] = {0}; // 快照版精确匹配后缀（如 "+pre-3", "+snapshot-11"）
+  char suffix_filter[32] = {
+      0};                // 快照版精确匹配后缀（如 "+pre-3", "+snapshot-11"）
   int filter_stable = 0; // release 模式下过滤 alpha/snapshot NeoForge 版本
   if (neoforge_mode) {
     // === 解析 MC 版本号，检测快照/预发布后缀 ===
@@ -891,13 +1002,16 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
     }
 
     const char *base = clean_mc;
-    if (strncmp(base, "1.", 2) == 0) base += 2;
+    if (strncmp(base, "1.", 2) == 0)
+      base += 2;
 
     // 统计 clean MC 版本的总点数，判断组成部分数量：
     //   1 个点 = 2 部分（如 1.21, 26.1, 26.2）→ 前缀需补 ".0."
     //   2+ 个点 = 3+ 部分（如 1.21.1, 26.1.2）→ 原样使用
     int total_dots = 0;
-    for (const char *cp = clean_mc; *cp; cp++) if (*cp == '.') total_dots++;
+    for (const char *cp = clean_mc; *cp; cp++)
+      if (*cp == '.')
+        total_dots++;
 
     if (suffix_filter[0]) {
       // 快照/预发布版：使用 alpha 专用前缀，精确匹配 MC 版本号
@@ -928,14 +1042,15 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
   while (*p) {
     // 找 <version> 标签
     const char *tag = strstr(p, "<version>");
-    if (!tag) break;
+    if (!tag)
+      break;
     tag += 9; // 跳过 "<version>"
     const char *end = strstr(tag, "</version>");
-    if (!end) break;
+    if (!end)
+      break;
 
     size_t vlen = end - tag;
-    if (vlen > 0 && vlen < 128 &&
-        strncmp(tag, prefix, plen) == 0) {
+    if (vlen > 0 && vlen < 128 && strncmp(tag, prefix, plen) == 0) {
       // release 模式：过滤掉 MC 快照/预发布版对应的 NeoForge 版本
       // 这些版本号中含有 "alpha" 或 "snapshot" 标记
       // （如 26.1.0.0-alpha.14+snapshot-11 对应 MC 26.1-snapshot），
@@ -946,9 +1061,9 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
         const char *rest = tag + plen;
         const char *alpha_pos = strstr(rest, "alpha");
         const char *snap_pos = strstr(rest, "snapshot");
-        if ((alpha_pos && alpha_pos < end) ||
-            (snap_pos && snap_pos < end)) {
-          p = end + 10; continue;
+        if ((alpha_pos && alpha_pos < end) || (snap_pos && snap_pos < end)) {
+          p = end + 10;
+          continue;
         }
       }
 
@@ -958,7 +1073,8 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
       if (suffix_filter[0]) {
         const char *sfound = strstr(tag, suffix_filter);
         if (!sfound || sfound >= end) {
-          p = end + 10; continue;
+          p = end + 10;
+          continue;
         }
       }
 
@@ -967,7 +1083,8 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
         int new_cap = cap ? cap * 2 : 32;
         char **new_result = realloc(result, new_cap * sizeof(char *));
         if (!new_result) {
-          for (int k = 0; k < *count_out; k++) free(result[k]);
+          for (int k = 0; k < *count_out; k++)
+            free(result[k]);
           free(result);
           *count_out = 0;
           return NULL;
@@ -984,8 +1101,8 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
     p = end + 10; // 跳过 "</version>"
   }
 
- // 反转数组使新版本在前（XML 中旧版本在前）
- if (result && *count_out > 1) {
+  // 反转数组使新版本在前（XML 中旧版本在前）
+  if (result && *count_out > 1) {
     // 按版本号降序排列（高版本在前），数值感知比较
     for (int i = 0; i < *count_out - 1; i++) {
       for (int j = 0; j < *count_out - 1 - i; j++) {
@@ -996,18 +1113,24 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
           if (*a >= '0' && *a <= '9' && *b >= '0' && *b <= '9') {
             long na = strtol(a, (char **)&a, 10);
             long nb = strtol(b, (char **)&b, 10);
-            if (na < nb) cmp = -1;
-            else if (na > nb) cmp = 1;
+            if (na < nb)
+              cmp = -1;
+            else if (na > nb)
+              cmp = 1;
           } else {
-            if (*a < *b) cmp = -1;
-            else if (*a > *b) cmp = 1;
+            if (*a < *b)
+              cmp = -1;
+            else if (*a > *b)
+              cmp = 1;
             a++;
             b++;
           }
         }
         if (cmp == 0) {
-          if (*a) cmp = 1;
-          else if (*b) cmp = -1;
+          if (*a)
+            cmp = 1;
+          else if (*b)
+            cmp = -1;
         }
         if (cmp < 0) {
           char *tmp = result[j];
@@ -1016,8 +1139,8 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
         }
       }
     }
- }
- return result;
+  }
+  return result;
 }
 
 // ======================== Forge/NeoForge 版本选择器 ========================
@@ -1028,57 +1151,76 @@ static char *pick_forge_version(char **versions, int count,
   char label[32];
   snprintf(label, sizeof(label), "%s", fcfg->artifact_id);
   // 首字母大写
-  if (label[0] >= 'a' && label[0] <= 'z') label[0] -= 32;
+  if (label[0] >= 'a' && label[0] <= 'z')
+    label[0] -= 32;
 
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select %s version (%d available):", label, count);
     int max_disp = row - 6;
-    if (sel < scroll) scroll = sel;
-    if (sel >= scroll + max_disp) scroll = sel - max_disp + 1;
-    if (scroll < 0) scroll = 0;
+    if (sel < scroll)
+      scroll = sel;
+    if (sel >= scroll + max_disp)
+      scroll = sel - max_disp + 1;
+    if (scroll < 0)
+      scroll = 0;
 
     for (int i = scroll; i < count && i < scroll + max_disp; i++) {
-      if (i == sel) attron(A_REVERSE);
+      if (i == sel)
+        attron(A_REVERSE);
       mvprintw(4 + i - scroll, 6, "%s", versions[i]);
-      if (i == sel) attroff(A_REVERSE);
+      if (i == sel)
+        attroff(A_REVERSE);
     }
-    if (scroll > 0) mvprintw(3, 6, "... more above ...");
+    if (scroll > 0)
+      mvprintw(3, 6, "... more above ...");
     if (scroll + max_disp < count)
       mvprintw(4 + max_disp, 6, "... more below ...");
     mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
 
     int c = getch();
-    if (c == 'j' && sel < count - 1) sel++;
-    if (c == 'k' && sel > 0) sel--;
-    if (c == '\n') break;
-    if (c == 'q') { clear(); return NULL; }
+    if (c == 'j' || c == KEY_DOWN && sel < count - 1)
+      sel++;
+    if (c == 'k' || c == KEY_UP && sel > 0)
+      sel--;
+    if (c == '\n')
+      break;
+    if (c == 'q') {
+      clear();
+      return NULL;
+    }
   }
   clear();
   return strdup(versions[sel]);
 }
 
-// ======================== 从 JAR 的 MANIFEST.MF 提取 Main-Class ========================
-static int get_jar_main_class(const char *jar_path, char *out, size_t out_size) {
+// ======================== 从 JAR 的 MANIFEST.MF 提取 Main-Class
+// ========================
+static int get_jar_main_class(const char *jar_path, char *out,
+                              size_t out_size) {
   out[0] = '\0';
-  if (!jar_path || access(jar_path, R_OK) != 0) return 0;
+  if (!jar_path || access(jar_path, R_OK) != 0)
+    return 0;
 
   char cmd[1024];
   snprintf(cmd, sizeof(cmd), "unzip -p '%s' META-INF/MANIFEST.MF 2>/dev/null",
            jar_path);
   FILE *fp = popen(cmd, "r");
-  if (!fp) return 0;
+  if (!fp)
+    return 0;
 
   char line[512];
   while (fgets(line, sizeof(line), fp)) {
     // 跳过续行（以空格开头）
-    if (line[0] == ' ') continue;
+    if (line[0] == ' ')
+      continue;
     // 匹配 "Main-Class: <classname>"
     if (strncmp(line, "Main-Class:", 11) == 0) {
       char *val = line + 11;
       // 跳过前导空格
-      while (*val == ' ' || *val == '\t') val++;
+      while (*val == ' ' || *val == '\t')
+        val++;
       // 去除尾部 \r \n
       size_t vlen = strlen(val);
       while (vlen > 0 && (val[vlen - 1] == '\n' || val[vlen - 1] == '\r'))
@@ -1095,15 +1237,17 @@ static int get_jar_main_class(const char *jar_path, char *out, size_t out_size) 
   return 0;
 }
 
-// ======================== 解析 install_profile data 段中的值 ========================
-// raw: 原始值，可能是 "{MINECRAFT_JAR}" 或 "[group:artifact:version:classifier@ext]" 或纯字符串
-// data: install_profile 的 data JSON 对象
-// outputs: 已执行 processor 的 outputs 累积映射
-// 返回 malloc 的解析后路径/值，调用者负责 free
+// ======================== 解析 install_profile data 段中的值
+// ======================== raw: 原始值，可能是 "{MINECRAFT_JAR}" 或
+// "[group:artifact:version:classifier@ext]" 或纯字符串 data: install_profile 的
+// data JSON 对象 outputs: 已执行 processor 的 outputs 累积映射 返回 malloc
+// 的解析后路径/值，调用者负责 free
 static char *resolve_data_value(const char *raw, const char *mcdir,
-                                const char *version_dir, const char *custom_name,
-                                cJSON *data, cJSON *outputs) {
-  if (!raw) return strdup("");
+                                const char *version_dir,
+                                const char *custom_name, cJSON *data,
+                                cJSON *outputs) {
+  if (!raw)
+    return strdup("");
 
   // 1) 检查是否为 {KEY} 占位符
   if (raw[0] == '{') {
@@ -1111,7 +1255,8 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
     if (end) {
       size_t klen = end - raw - 1;
       char key[64] = {0};
-      if (klen < sizeof(key)) memcpy(key, raw + 1, klen);
+      if (klen < sizeof(key))
+        memcpy(key, raw + 1, klen);
 
       // ROOT 占位符 → 直接返回版本目录（data 段中 ROOT 是自引用的 {ROOT}）
       if (strcmp(key, "ROOT") == 0) {
@@ -1126,24 +1271,28 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
           cJSON *client_val = cJSON_GetObjectItem(dv, "client");
           if (client_val && cJSON_IsString(client_val)) {
             const char *cval = client_val->valuestring;
-            // 处理单引号包裹的字面值（如 'de86b035d2da0f78940796bb95c39a932ed84834'）
+            // 处理单引号包裹的字面值（如
+            // 'de86b035d2da0f78940796bb95c39a932ed84834'）
             size_t cvlen = strlen(cval);
             if (cvlen >= 2 && cval[0] == '\'' && cval[cvlen - 1] == '\'') {
               char *unquoted = strdup(cval + 1);
-              if (unquoted) unquoted[cvlen - 2] = '\0';
+              if (unquoted)
+                unquoted[cvlen - 2] = '\0';
               return unquoted ? unquoted : strdup(cval);
             }
-            // 防止循环：如果 data 值等于自身 key（如 "ROOT": "{ROOT}"），已在上方处理
+            // 防止循环：如果 data 值等于自身 key（如 "ROOT":
+            // "{ROOT}"），已在上方处理
             if (strcmp(cval, raw) == 0) {
               return strdup(version_dir); // 回退到版本目录
             }
             // 值如果是 jar 内部路径（以 / 开头），需要从 installer jar 提取
             if (cval[0] == '/') {
               const char *inner = cval;
-              while (*inner == '/') inner++;
+              while (*inner == '/')
+                inner++;
               char tmp_path[600];
-              snprintf(tmp_path, sizeof(tmp_path),
-                       "/tmp/tmcl_forge_data_%s", inner);
+              snprintf(tmp_path, sizeof(tmp_path), "/tmp/tmcl_forge_data_%s",
+                       inner);
               // 始终重新提取，避免残留旧版本文件导致校验和不匹配
               char ext_cmd[1600];
               snprintf(ext_cmd, sizeof(ext_cmd),
@@ -1154,8 +1303,7 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
               return strdup(tmp_path);
             }
             // 递归解析（值可能是 [maven:coord] 格式或裸 maven 坐标）
-            return resolve_data_value(cval,
-                                      mcdir, version_dir, custom_name,
+            return resolve_data_value(cval, mcdir, version_dir, custom_name,
                                       data, outputs);
           }
         }
@@ -1199,7 +1347,8 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
   if (raw[0] == '[' && raw[strlen(raw) - 1] == ']') {
     size_t rlen = strlen(raw);
     char *inner = malloc(rlen);
-    if (!inner) return strdup(raw);
+    if (!inner)
+      return strdup(raw);
     memcpy(inner, raw + 1, rlen - 2);
     inner[rlen - 2] = '\0';
 
@@ -1214,7 +1363,8 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
       char gp[256];
       snprintf(gp, sizeof(gp), "%s", group);
       for (char *gp2 = gp; *gp2; gp2++)
-        if (*gp2 == '.') *gp2 = '/';
+        if (*gp2 == '.')
+          *gp2 = '/';
 
       // 特殊处理：net.minecraft:minecraft:*:client → 原版 client.jar
       if (strcmp(group, "net.minecraft") == 0 &&
@@ -1238,12 +1388,11 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
         }
 
         if (classifier) {
-          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s-%s.%s",
-                   mcdir, gp, artifact, version, artifact, version,
-                   classifier, ext);
+          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s-%s.%s", mcdir, gp,
+                   artifact, version, artifact, version, classifier, ext);
         } else {
-          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s.%s",
-                   mcdir, gp, artifact, version, artifact, version, ext);
+          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s.%s", mcdir, gp,
+                   artifact, version, artifact, version, ext);
         }
       }
     }
@@ -1251,8 +1400,9 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
     return result ? result : strdup(raw);
   }
 
-  // 3) 检查是否为无括号的 Maven 坐标 (group:artifact:version[:classifier[@ext]])
-  // Forge 1.20+ processor 的 "jar" 字段使用此格式
+  // 3) 检查是否为无括号的 Maven 坐标
+  // (group:artifact:version[:classifier[@ext]]) Forge 1.20+ processor 的 "jar"
+  // 字段使用此格式
   if (strchr(raw, ':')) {
     // 复制一份用于 strtok_r 修改
     char *raw_copy = strdup(raw);
@@ -1267,7 +1417,8 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
         char gp[256];
         snprintf(gp, sizeof(gp), "%s", group);
         for (char *p = gp; *p; p++)
-          if (*p == '.') *p = '/';
+          if (*p == '.')
+            *p = '/';
         char *at_sign = strchr(version, '@');
         char ext[16] = "jar";
         if (at_sign) {
@@ -1282,17 +1433,17 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
           }
         }
         if (classifier) {
-          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s-%s.%s",
-                   mcdir, gp, artifact, version, artifact, version,
-                   classifier, ext);
+          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s-%s.%s", mcdir, gp,
+                   artifact, version, artifact, version, classifier, ext);
         } else {
-          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s.%s",
-                   mcdir, gp, artifact, version, artifact, version, ext);
+          asprintf(&result, "%s/libraries/%s/%s/%s/%s-%s.%s", mcdir, gp,
+                   artifact, version, artifact, version, ext);
         }
       }
       free(raw_copy);
     }
-    if (result) return result;
+    if (result)
+      return result;
   }
 
   // 4) 纯字符串，直接返回
@@ -1303,7 +1454,8 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
 static int run_forge_processor(cJSON *proc, const char *mcdir,
                                const char *version_dir, const char *custom_name,
                                cJSON *data, cJSON **outputs) {
-  if (g_cancel) return 1;
+  if (g_cancel)
+    return 1;
 
   // 1) 检查 sides：只处理 "client"
   cJSON *sides = cJSON_GetObjectItem(proc, "sides");
@@ -1316,7 +1468,8 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
         break;
       }
     }
-    if (!has_client) return 0; // 跳过 server-only processor
+    if (!has_client)
+      return 0; // 跳过 server-only processor
   }
 
   // 2) 获取 processor jar 路径
@@ -1325,9 +1478,8 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
     printf("  ERROR: processor missing 'jar' field\n");
     return 1;
   }
-  char *jar_path = resolve_data_value(jar_name->valuestring,
-                                      mcdir, version_dir, custom_name,
-                                      data, *outputs);
+  char *jar_path = resolve_data_value(jar_name->valuestring, mcdir, version_dir,
+                                      custom_name, data, *outputs);
   if (!jar_path || access(jar_path, R_OK) != 0) {
     printf("  ERROR: processor jar not found: %s\n",
            jar_path ? jar_path : "(null)");
@@ -1352,10 +1504,11 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
   if (cp_arr && cJSON_IsArray(cp_arr)) {
     cJSON *cp_item;
     cJSON_ArrayForEach(cp_item, cp_arr) {
-      if (!cJSON_IsString(cp_item)) continue;
-      char *cp_path = resolve_data_value(cp_item->valuestring,
-                                         mcdir, version_dir, custom_name,
-                                         data, *outputs);
+      if (!cJSON_IsString(cp_item))
+        continue;
+      char *cp_path =
+          resolve_data_value(cp_item->valuestring, mcdir, version_dir,
+                             custom_name, data, *outputs);
       if (cp_path) {
         size_t cur = strlen(classpath);
         snprintf(classpath + cur, sizeof(classpath) - cur, ":%s", cp_path);
@@ -1376,10 +1529,11 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
   if (pargs && cJSON_IsArray(pargs)) {
     cJSON *arg_item;
     cJSON_ArrayForEach(arg_item, pargs) {
-      if (!cJSON_IsString(arg_item) || ac >= 250) continue;
-      char *resolved = resolve_data_value(arg_item->valuestring,
-                                          mcdir, version_dir, custom_name,
-                                          data, *outputs);
+      if (!cJSON_IsString(arg_item) || ac >= 250)
+        continue;
+      char *resolved =
+          resolve_data_value(arg_item->valuestring, mcdir, version_dir,
+                             custom_name, data, *outputs);
       if (resolved) {
         args[ac++] = resolved;
       }
@@ -1389,7 +1543,8 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
 
   // 6) 打印命令（调试用）
   printf("  CMD:");
-  for (int i = 0; i < ac; i++) printf(" %s", args[i]);
+  for (int i = 0; i < ac; i++)
+    printf(" %s", args[i]);
   printf("\n");
 
   // 7) fork/exec
@@ -1398,7 +1553,8 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
     printf("  ERROR: fork failed\n");
     free(jar_path);
     // 释放 resolve_data_value 返回的 args（索引 4 开始）
-    for (int i = 4; i < ac; i++) free(args[i]);
+    for (int i = 4; i < ac; i++)
+      free(args[i]);
     return 1;
   }
   if (pid == 0) {
@@ -1415,24 +1571,35 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
       waitpid(pid, &status, 0);
       printf("  CANCELLED\n");
       free(jar_path);
-      for (int i = 4; i < ac; i++) free(args[i]);
+      for (int i = 4; i < ac; i++)
+        free(args[i]);
       return 1;
     }
     pid_t r = waitpid(pid, &status, WNOHANG);
-    if (r < 0) { if (errno == EINTR) continue; break; }
-    if (r > 0) { done = 1; break; }
+    if (r < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (r > 0) {
+      done = 1;
+      break;
+    }
     usleep(100000);
   }
 
   if (!done) {
     printf("  ERROR: waitpid failed\n");
     free(jar_path);
-    for (int i = 4; i < ac; i++) free(args[i]);
+    for (int i = 4; i < ac; i++)
+      free(args[i]);
     return 1;
   }
 
-  // 9) 释放 args 中动态分配的字符串（索引 4 及以后是 resolve_data_value 返回的）
-  for (int i = 4; i < ac; i++) free(args[i]);
+  // 9) 释放 args 中动态分配的字符串（索引 4 及以后是 resolve_data_value
+  // 返回的）
+  for (int i = 4; i < ac; i++)
+    free(args[i]);
   free(jar_path);
 
   if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
@@ -1440,24 +1607,28 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
     // 10) 更新 outputs 映射
     // Forge installer 的 outputs 语义：
     //   key:   源文件占位符（如 {MC_SLIM}）
-    //   value: 目标键（如 {MC_SLIM_SHA}），表示「计算 key 文件的 SHA 并存为 value」
+    //   value: 目标键（如 {MC_SLIM_SHA}），表示「计算 key 文件的 SHA 并存为
+    //   value」
     // 我们不做 SHA 验证，只需正确映射：
     //   - 存储到 value 键（目标键）而非 key 键（源键）
     //   - 源键在 data 中有实际值，不应被覆盖
     cJSON *proc_outputs = cJSON_GetObjectItem(proc, "outputs");
     if (proc_outputs && cJSON_IsObject(proc_outputs)) {
-      if (!*outputs) *outputs = cJSON_CreateObject();
+      if (!*outputs)
+        *outputs = cJSON_CreateObject();
       cJSON *child;
       cJSON_ArrayForEach(child, proc_outputs) {
         if (cJSON_IsString(child)) {
-          const char *src_key = child->string;   // 源占位符（如 {MC_SLIM}）
-          const char *dest_key = child->valuestring; // 目标键（如 {MC_SLIM_SHA}）
+          const char *src_key = child->string; // 源占位符（如 {MC_SLIM}）
+          const char *dest_key =
+              child->valuestring; // 目标键（如 {MC_SLIM_SHA}）
           // 解析源文件路径
           char *src_path = resolve_data_value(src_key, mcdir, version_dir,
                                               custom_name, data, *outputs);
           if (src_path) {
-            // 计算文件 SHA1（simplified: 用文件大小+mtime 做标识，或直接存路径）
-            // 暂时将源路径存入目标键，以便后续 processor 可以找到文件
+            // 计算文件 SHA1（simplified: 用文件大小+mtime
+            // 做标识，或直接存路径） 暂时将源路径存入目标键，以便后续 processor
+            // 可以找到文件
             if (strcmp(dest_key, src_key) != 0) {
               cJSON_AddStringToObject(*outputs, dest_key, src_path);
             }
@@ -1474,14 +1645,16 @@ static int run_forge_processor(cJSON *proc, const char *mcdir,
   }
 }
 
-// ======================== 合并 vanilla + Forge version JSON ========================
+// ======================== 合并 vanilla + Forge version JSON
+// ========================
 static int merge_forge_version_json(cJSON *vanilla, cJSON *version_info,
-                                     const char *custom_name,
-                                     const char *mc_version,
-                                     const char *modloader,
-                                     const char *forge_version,
-                                     const char *json_path) {
-  if (!vanilla || !version_info) return 1;
+                                    const char *custom_name,
+                                    const char *mc_version,
+                                    const char *modloader,
+                                    const char *forge_version,
+                                    const char *json_path) {
+  if (!vanilla || !version_info)
+    return 1;
 
   // a) 覆盖 mainClass（从 versionInfo 取）
   cJSON *vi_main = cJSON_GetObjectItem(version_info, "mainClass");
@@ -1521,7 +1694,8 @@ static int merge_forge_version_json(cJSON *vanilla, cJSON *version_info,
     // 收集 versionInfo libraries 的 groupId:artifactId
     int vi_count = cJSON_GetArraySize(vi_libs);
     char **vi_ga = malloc(vi_count * sizeof(char *));
-    if (!vi_ga && vi_count > 0) return 1;
+    if (!vi_ga && vi_count > 0)
+      return 1;
     for (int i = 0; i < vi_count; i++) {
       vi_ga[i] = NULL;
       cJSON *lib = cJSON_GetArrayItem(vi_libs, i);
@@ -1531,7 +1705,8 @@ static int merge_forge_version_json(cJSON *vanilla, cJSON *version_info,
         char *first_colon = strchr(ns, ':');
         if (first_colon) {
           char *second_colon = strchr(first_colon + 1, ':');
-          if (second_colon) *second_colon = '\0';
+          if (second_colon)
+            *second_colon = '\0';
         }
         vi_ga[i] = ns;
       }
@@ -1546,7 +1721,8 @@ static int merge_forge_version_json(cJSON *vanilla, cJSON *version_info,
         char *fc = strchr(ns, ':');
         if (fc) {
           char *sc = strchr(fc + 1, ':');
-          if (sc) *sc = '\0';
+          if (sc)
+            *sc = '\0';
         }
         for (int j = 0; j < vi_count; j++) {
           if (vi_ga[j] && strcmp(ns, vi_ga[j]) == 0) {
@@ -1557,7 +1733,8 @@ static int merge_forge_version_json(cJSON *vanilla, cJSON *version_info,
         free(ns);
       }
     }
-    for (int i = 0; i < vi_count; i++) free(vi_ga[i]);
+    for (int i = 0; i < vi_count; i++)
+      free(vi_ga[i]);
     free(vi_ga);
     // 追加 versionInfo libraries
     cJSON *lib;
@@ -1587,9 +1764,13 @@ static int merge_forge_version_json(cJSON *vanilla, cJSON *version_info,
 
   // g) 写回文件
   char *merged = cJSON_Print(vanilla);
-  if (!merged) return 1;
+  if (!merged)
+    return 1;
   FILE *mf = fopen(json_path, "w");
-  if (!mf) { free(merged); return 1; }
+  if (!mf) {
+    free(merged);
+    return 1;
+  }
   fputs(merged, mf);
   fclose(mf);
   free(merged);
@@ -1607,13 +1788,15 @@ static void do_install(ConfigState *cstate, const char *version_id,
   g_cancel = 0;
   endwin();
 
- int num_threads = atoi(cstate->items[6].value);
- if (num_threads < 1) num_threads = 96;
+  int num_threads = atoi(cstate->items[6].value);
+  if (num_threads < 1)
+    num_threads = 96;
   int asset_threads = atoi(cstate->items[7].value);
-  if (asset_threads < 1) asset_threads = 96;
- char *mcdir = cstate->items[2].value;
+  if (asset_threads < 1)
+    asset_threads = 96;
+  char *mcdir = cstate->items[2].value;
 
- // Fabric 安装：使用用户选择的 loader 版本构建 profile JSON URL
+  // Fabric 安装：使用用户选择的 loader 版本构建 profile JSON URL
   char *fabric_url = NULL;
   if (strcmp(modloader, "fabric") == 0) {
     if (!fabric_loader_ver || !fabric_loader_ver[0]) {
@@ -1626,10 +1809,11 @@ static void do_install(ConfigState *cstate, const char *version_id,
   }
 
   printf("\n=== Installing %s (%s) ===\n", custom_name, version_id);
-  printf("    Threads: %d (libs) / %d (assets)\n\n", num_threads, asset_threads);
+  printf("    Threads: %d (libs) / %d (assets)\n\n", num_threads,
+         asset_threads);
 
- char version_dir[512];
- snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", mcdir,
+  char version_dir[512];
+  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", mcdir,
            custom_name);
   mkdir(version_dir, 0755);
 
@@ -1639,7 +1823,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
            custom_name);
   if (dl_one(version_url, json_path, "version JSON") != 0) {
     printf("\nFailed to download version JSON. Aborting.\n");
-    free(fabric_url); goto done;
+    free(fabric_url);
+    goto done;
   }
 
   // 对于 Fabric：下载 Fabric profile JSON，合并到原版 JSON 中，
@@ -1654,13 +1839,19 @@ static void do_install(ConfigState *cstate, const char *version_id,
     char cmd[1280];
     snprintf(cmd, sizeof(cmd), "curl -sL '%s'", fabric_url);
     FILE *fp = popen(cmd, "r");
-    char *fabric_raw = NULL; size_t fcap = 0, flen = 0;
+    char *fabric_raw = NULL;
+    size_t fcap = 0, flen = 0;
     if (fp) {
       char chunk[4096];
       while (fgets(chunk, sizeof(chunk), fp)) {
         size_t cl = strlen(chunk);
-        if (flen + cl + 1 > fcap) { fcap = fcap ? fcap * 2 : 4096; fabric_raw = realloc(fabric_raw, fcap); }
-        memcpy(fabric_raw + flen, chunk, cl); flen += cl; fabric_raw[flen] = '\0';
+        if (flen + cl + 1 > fcap) {
+          fcap = fcap ? fcap * 2 : 4096;
+          fabric_raw = realloc(fabric_raw, fcap);
+        }
+        memcpy(fabric_raw + flen, chunk, cl);
+        flen += cl;
+        fabric_raw[flen] = '\0';
       }
       pclose(fp);
     }
@@ -1668,19 +1859,36 @@ static void do_install(ConfigState *cstate, const char *version_id,
     fabric_url = NULL;
 
     cJSON *fprofile = NULL;
-    if (fabric_raw) { fprofile = cJSON_Parse(fabric_raw); free(fabric_raw); }
-    if (!fprofile) { printf("ERROR: Failed to parse Fabric profile JSON.\n"); goto done; }
+    if (fabric_raw) {
+      fprofile = cJSON_Parse(fabric_raw);
+      free(fabric_raw);
+    }
+    if (!fprofile) {
+      printf("ERROR: Failed to parse Fabric profile JSON.\n");
+      goto done;
+    }
 
     // 读取已下载的原版 JSON
     cJSON *vanilla = NULL;
     FILE *vf = fopen(json_path, "r");
     if (vf) {
-      fseek(vf, 0, SEEK_END); long vsz = ftell(vf); fseek(vf, 0, SEEK_SET);
+      fseek(vf, 0, SEEK_END);
+      long vsz = ftell(vf);
+      fseek(vf, 0, SEEK_SET);
       char *vd = malloc(vsz + 1);
-      if (vd) { fread(vd, 1, vsz, vf); vd[vsz] = '\0'; vanilla = cJSON_Parse(vd); free(vd); }
+      if (vd) {
+        fread(vd, 1, vsz, vf);
+        vd[vsz] = '\0';
+        vanilla = cJSON_Parse(vd);
+        free(vd);
+      }
       fclose(vf);
     }
-    if (!vanilla) { printf("ERROR: Failed to parse vanilla JSON.\n"); cJSON_Delete(fprofile); goto done; }
+    if (!vanilla) {
+      printf("ERROR: Failed to parse vanilla JSON.\n");
+      cJSON_Delete(fprofile);
+      goto done;
+    }
 
     // --- 合并操作 ---
     // a) 改 mainClass
@@ -1691,8 +1899,9 @@ static void do_install(ConfigState *cstate, const char *version_id,
     }
 
     // b) 去重 + 追加 Fabric libraries
-    // Fabric 带了自己的 ASM 等库，如果原版已有同名 library（同 groupId:artifactId），
-    // 移除原版的旧版本，否则 Fabric Loader 检测到重复类会拒绝启动
+    // Fabric 带了自己的 ASM 等库，如果原版已有同名 library（同
+    // groupId:artifactId）， 移除原版的旧版本，否则 Fabric Loader
+    // 检测到重复类会拒绝启动
     cJSON *fb_libs = cJSON_GetObjectItem(fprofile, "libraries");
     cJSON *v_libs = cJSON_GetObjectItem(vanilla, "libraries");
     if (fb_libs && cJSON_IsArray(fb_libs) && v_libs && cJSON_IsArray(v_libs)) {
@@ -1708,7 +1917,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
           char *first_colon = strchr(ns, ':');
           if (first_colon) {
             char *second_colon = strchr(first_colon + 1, ':');
-            if (second_colon) *second_colon = '\0';  // 截断到 groupId:artifactId
+            if (second_colon)
+              *second_colon = '\0'; // 截断到 groupId:artifactId
           }
           fb_ga[i] = ns;
         }
@@ -1723,7 +1933,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
           char *fc = strchr(ns, ':');
           if (fc) {
             char *sc = strchr(fc + 1, ':');
-            if (sc) *sc = '\0';
+            if (sc)
+              *sc = '\0';
           }
           for (int j = 0; j < fb_count; j++) {
             if (fb_ga[j] && strcmp(ns, fb_ga[j]) == 0) {
@@ -1734,7 +1945,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
           free(ns);
         }
       }
-      for (int i = 0; i < fb_count; i++) free(fb_ga[i]);
+      for (int i = 0; i < fb_count; i++)
+        free(fb_ga[i]);
       free(fb_ga);
       // 追加 Fabric libraries
       cJSON *lib;
@@ -1753,7 +1965,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
         cJSON *jv;
         cJSON_ArrayForEach(jv, fb_jvm) {
           if (cJSON_IsString(jv)) {
-            if (strncmp(jv->valuestring, "-DFabric", 8) == 0) continue;
+            if (strncmp(jv->valuestring, "-DFabric", 8) == 0)
+              continue;
           }
           cJSON_AddItemToArray(v_jvm, cJSON_Duplicate(jv, 1));
         }
@@ -1778,7 +1991,10 @@ static void do_install(ConfigState *cstate, const char *version_id,
     char *merged = cJSON_Print(vanilla);
     if (merged) {
       FILE *mf = fopen(json_path, "w");
-      if (mf) { fputs(merged, mf); fclose(mf); }
+      if (mf) {
+        fputs(merged, mf);
+        fclose(mf);
+      }
       free(merged);
       printf("  OK  merged Fabric + vanilla JSON\n");
     }
@@ -1792,7 +2008,10 @@ static void do_install(ConfigState *cstate, const char *version_id,
 
   // 2) 解析版本 JSON（原版为直接下载的，Fabric 为合并后的自包含 JSON）
   FILE *jf = fopen(json_path, "r");
-  if (!jf) { printf("Failed to read version JSON.\n"); goto done; }
+  if (!jf) {
+    printf("Failed to read version JSON.\n");
+    goto done;
+  }
   fseek(jf, 0, SEEK_END);
   long jsz = ftell(jf);
   fseek(jf, 0, SEEK_SET);
@@ -1803,12 +2022,16 @@ static void do_install(ConfigState *cstate, const char *version_id,
 
   cJSON *root = cJSON_Parse(jdata);
   free(jdata);
-  if (!root) { printf("Failed to parse version JSON.\n"); goto done; }
+  if (!root) {
+    printf("Failed to parse version JSON.\n");
+    goto done;
+  }
 
   // ---- Phase 1: 收集所有下载任务 ----
   DlTask *tasks = malloc(8192 * sizeof(DlTask));
   int tcount = 0;
-  // 8192 slots is far beyond practical max (~200 files), so no bounds check needed
+  // 8192 slots is far beyond practical max (~200 files), so no bounds check
+  // needed
 
   // a) client.jar（合并后的 JSON 自带 downloads.client）
   cJSON *downloads = cJSON_GetObjectItem(root, "downloads");
@@ -1821,7 +2044,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
                  jar_url->valuestring);
         snprintf(tasks[tcount].dest, sizeof(tasks[tcount].dest), "%s/%s.jar",
                  version_dir, custom_name);
-        snprintf(tasks[tcount].label, sizeof(tasks[tcount].label), "client.jar");
+        snprintf(tasks[tcount].label, sizeof(tasks[tcount].label),
+                 "client.jar");
         tcount++;
       }
     }
@@ -1834,13 +2058,15 @@ static void do_install(ConfigState *cstate, const char *version_id,
     cJSON *lib;
     cJSON_ArrayForEach(lib, libraries) {
       cJSON *rules = cJSON_GetObjectItem(lib, "rules");
-      if (lib_rules_ok(rules)) lib_match++;
+      if (lib_rules_ok(rules))
+        lib_match++;
     }
 
     int cur = 0;
     cJSON_ArrayForEach(lib, libraries) {
       cJSON *rules = cJSON_GetObjectItem(lib, "rules");
-      if (!lib_rules_ok(rules)) continue;
+      if (!lib_rules_ok(rules))
+        continue;
       cur++;
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
@@ -1884,9 +2110,9 @@ static void do_install(ConfigState *cstate, const char *version_id,
     goto cancelled;
   }
   for (int rtry = 0; rtry < MAX_RETRIES && !g_cancel; rtry++) {
-    int f = retry_failed(tasks, tcount, 8, &failed_names,
-                         &failed_count);
-    if (f == 0) break;
+    int f = retry_failed(tasks, tcount, 8, &failed_names, &failed_count);
+    if (f == 0)
+      break;
   }
 
   // ---- Phase 3: 下载 asset 文件 ----
@@ -1904,7 +2130,8 @@ static void do_install(ConfigState *cstate, const char *version_id,
       fclose(aif);
 
       cJSON *ai_root = NULL;
-      if (ai_data) ai_root = cJSON_Parse(ai_data);
+      if (ai_data)
+        ai_root = cJSON_Parse(ai_data);
       if (ai_root) {
         cJSON *objects = cJSON_GetObjectItem(ai_root, "objects");
         if (objects && cJSON_IsObject(objects)) {
@@ -1913,50 +2140,58 @@ static void do_install(ConfigState *cstate, const char *version_id,
           cJSON *obj_item;
           cJSON_ArrayForEach(obj_item, objects) {
             cJSON *hash_item = cJSON_GetObjectItem(obj_item, "hash");
-            if (!hash_item || !cJSON_IsString(hash_item)) continue;
+            if (!hash_item || !cJSON_IsString(hash_item))
+              continue;
             const char *hash = hash_item->valuestring;
             char dest[600];
             snprintf(dest, sizeof(dest), "%s/assets/objects/%c%c/%s", mcdir,
                      hash[0], hash[1], hash);
-            if (access(dest, F_OK) == 0) already++;
-            else need_dl++;
+            if (access(dest, F_OK) == 0)
+              already++;
+            else
+              need_dl++;
           }
 
           DlTask *atasks = malloc((need_dl + 1) * sizeof(DlTask));
           int ac = 0;
           cJSON_ArrayForEach(obj_item, objects) {
             cJSON *hash_item = cJSON_GetObjectItem(obj_item, "hash");
-            if (!hash_item || !cJSON_IsString(hash_item)) continue;
+            if (!hash_item || !cJSON_IsString(hash_item))
+              continue;
             const char *hash = hash_item->valuestring;
             char first2[3] = {hash[0], hash[1], '\0'};
             char dest[600];
             snprintf(dest, sizeof(dest), "%s/assets/objects/%s/%s", mcdir,
                      first2, hash);
-            if (access(dest, F_OK) == 0) continue;
+            if (access(dest, F_OK) == 0)
+              continue;
 
             snprintf(atasks[ac].url, sizeof(atasks[ac].url),
                      "https://resources.download.minecraft.net/%s/%s", first2,
                      hash);
-            // path may be up to 600 bytes; DlTask.dest is 512 — use strncpy with explicit truncation guard
+            // path may be up to 600 bytes; DlTask.dest is 512 — use strncpy
+            // with explicit truncation guard
             strncpy(atasks[ac].dest, dest, sizeof(atasks[ac].dest) - 1);
             atasks[ac].dest[sizeof(atasks[ac].dest) - 1] = '\0';
-            snprintf(atasks[ac].label, sizeof(atasks[ac].label),
-                     "[%d/%d] %s", ac + 1, need_dl, obj_item->string);
+            snprintf(atasks[ac].label, sizeof(atasks[ac].label), "[%d/%d] %s",
+                     ac + 1, need_dl, obj_item->string);
             ac++;
           }
           if (ac > 0) {
-            printf("\n  Assets: %d need download (%d already cached)\n\n",
-                   ac, already);
+            printf("\n  Assets: %d need download (%d already cached)\n\n", ac,
+                   already);
             dl_parallel(atasks, ac, asset_threads);
             // 对 asset 也做重试
             char **a_fail = NULL;
             int a_fc = 0;
             for (int rtry = 0; rtry < MAX_RETRIES && !g_cancel; rtry++) {
               int f = retry_failed(atasks, ac, asset_threads, &a_fail, &a_fc);
-              if (f == 0) break;
+              if (f == 0)
+                break;
               // 合并失败列表
               if (a_fc > 0) {
-                failed_names = realloc(failed_names, (failed_count + a_fc) * sizeof(char *));
+                failed_names = realloc(failed_names,
+                                       (failed_count + a_fc) * sizeof(char *));
                 for (int i = 0; i < a_fc; i++)
                   failed_names[failed_count++] = a_fail[i];
                 free(a_fail);
@@ -1988,19 +2223,21 @@ cancelled:
   }
 
   printf("\n=== Installation complete: %s ===\n", custom_name);
-  if (g_cancel) printf("  (cancelled by user)\n");
+  if (g_cancel)
+    printf("  (cancelled by user)\n");
   printf("Press Enter to return...\n");
-  while (getchar() != '\n') {}
+  while (getchar() != '\n') {
+  }
 
 done:
-  if (root) cJSON_Delete(root);
+  if (root)
+    cJSON_Delete(root);
   sa.sa_handler = SIG_DFL;
   sigaction(SIGINT, &sa, NULL);
 }
 
-
-
-// ======================== 旧版 Forge 安装主函数（1.7.10–1.12.2） ========================
+// ======================== 旧版 Forge 安装主函数（1.7.10–1.12.2）
+// ========================
 void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
                              const char *vanilla_url, const char *custom_name,
                              const char *modloader, const char *type,
@@ -2014,19 +2251,22 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   g_cancel = 0;
   endwin();
 
- int num_threads = atoi(cstate->items[6].value);
- if (num_threads < 1) num_threads = 96;
- char *mcdir = cstate->items[2].value;
+  int num_threads = atoi(cstate->items[6].value);
+  if (num_threads < 1)
+    num_threads = 96;
+  char *mcdir = cstate->items[2].value;
 
   int asset_threads = atoi(cstate->items[7].value);
-  if (asset_threads < 1) asset_threads = 96;
+  if (asset_threads < 1)
+    asset_threads = 96;
 
- printf("\n=== Installing %s (%s / forge legacy) ===\n", custom_name,
-        mc_version);
-  printf("    Threads: %d (libs) / %d (assets)\n\n", num_threads, asset_threads);
+  printf("\n=== Installing %s (%s / forge legacy) ===\n", custom_name,
+         mc_version);
+  printf("    Threads: %d (libs) / %d (assets)\n\n", num_threads,
+         asset_threads);
 
- // 创建版本目录
- char version_dir[512];
+  // 创建版本目录
+  char version_dir[512];
   snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", mcdir,
            custom_name);
   mkdir(version_dir, 0755);
@@ -2035,10 +2275,11 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   snprintf(json_path, sizeof(json_path), "%s/%s.json", version_dir,
            custom_name);
 
-  cJSON *vanilla = NULL; // 原版 JSON，Phase 2 解析，Phase 4 合并，clean_tasks 释放
+  cJSON *vanilla =
+      NULL; // 原版 JSON，Phase 2 解析，Phase 4 合并，clean_tasks 释放
 
- // ---- Phase 0: 确认 forge 版本（已在 install_page 中预选） ----
- char *chosen_forge_ver = NULL;
+  // ---- Phase 0: 确认 forge 版本（已在 install_page 中预选） ----
+  char *chosen_forge_ver = NULL;
   if (forge_version && forge_version[0]) {
     chosen_forge_ver = strdup(forge_version);
   }
@@ -2052,14 +2293,15 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   char group_path[256];
   snprintf(group_path, sizeof(group_path), "%s", fcfg->group_id);
   for (char *p = group_path; *p; p++)
-    if (*p == '.') *p = '/';
+    if (*p == '.')
+      *p = '/';
 
   // ---- Phase 1: 下载 installer jar 并提取 install_profile.json ----
   char installer_url[1024];
   snprintf(installer_url, sizeof(installer_url),
-           "https://%s/%s/%s/%s/%s-%s-installer.jar",
-           fcfg->maven_base, group_path, fcfg->artifact_id,
-           chosen_forge_ver, fcfg->artifact_id, chosen_forge_ver);
+           "https://%s/%s/%s/%s/%s-%s-installer.jar", fcfg->maven_base,
+           group_path, fcfg->artifact_id, chosen_forge_ver, fcfg->artifact_id,
+           chosen_forge_ver);
 
   char installer_path[600];
   snprintf(installer_path, sizeof(installer_path),
@@ -2091,7 +2333,11 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
       if (plen + cl + 1 > pcap) {
         pcap = pcap ? pcap * 2 : 16384;
         void *newbuf = realloc(profile_raw, pcap);
-        if (!newbuf) { pclose(ep); free(profile_raw); goto done; }
+        if (!newbuf) {
+          pclose(ep);
+          free(profile_raw);
+          goto done;
+        }
         profile_raw = newbuf;
       }
       memcpy(profile_raw + plen, chunk, cl);
@@ -2125,8 +2371,8 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   printf("  Downloading vanilla JSON for %s...\n", mc_version);
   {
     char tmp_vanilla[600];
-    snprintf(tmp_vanilla, sizeof(tmp_vanilla),
-             "/tmp/tmcl_vanilla_%s.json", mc_version);
+    snprintf(tmp_vanilla, sizeof(tmp_vanilla), "/tmp/tmcl_vanilla_%s.json",
+             mc_version);
     if (dl_one(vanilla_url, tmp_vanilla, "vanilla JSON") != 0) {
       printf("ERROR: Failed to download vanilla JSON.\n");
       cJSON_Delete(install_profile);
@@ -2134,12 +2380,21 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
     }
 
     FILE *vf = fopen(tmp_vanilla, "r");
-    if (!vf) { remove(tmp_vanilla); cJSON_Delete(install_profile); goto done; }
+    if (!vf) {
+      remove(tmp_vanilla);
+      cJSON_Delete(install_profile);
+      goto done;
+    }
     fseek(vf, 0, SEEK_END);
     long vsz = ftell(vf);
     rewind(vf);
     char *vdata = malloc(vsz + 1);
-    if (!vdata) { fclose(vf); remove(tmp_vanilla); cJSON_Delete(install_profile); goto done; }
+    if (!vdata) {
+      fclose(vf);
+      remove(tmp_vanilla);
+      cJSON_Delete(install_profile);
+      goto done;
+    }
     fread(vdata, 1, vsz, vf);
     fclose(vf);
     vdata[vsz] = '\0';
@@ -2158,7 +2413,11 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
 
   // 构建下载任务数组
   DlTask *tasks = malloc(8192 * sizeof(DlTask));
-  if (!tasks) { cJSON_Delete(vanilla); cJSON_Delete(install_profile); goto done; }
+  if (!tasks) {
+    cJSON_Delete(vanilla);
+    cJSON_Delete(install_profile);
+    goto done;
+  }
   int tcount = 0;
 
   // a) 原版 libraries（从 vanilla JSON）
@@ -2166,26 +2425,30 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   if (v_libs && cJSON_IsArray(v_libs)) {
     cJSON *lib;
     cJSON_ArrayForEach(lib, v_libs) {
-      if (!lib_rules_ok(cJSON_GetObjectItem(lib, "rules"))) continue;
+      if (!lib_rules_ok(cJSON_GetObjectItem(lib, "rules")))
+        continue;
       DlTask *t = &tasks[tcount];
-      if (build_lib_task(t, lib, mcdir)) tcount++;
+      if (build_lib_task(t, lib, mcdir))
+        tcount++;
       // 处理旧版 MC（1.7.10 等）的 downloads.classifiers 原生库：
       // 原版 JSON 中，原生库使用 downloads.classifiers 指定各平台的 jar，
-      // 而非在 name/maven 坐标中包含 classifier。需为 native jars 创建下载任务。
+      // 而非在 name/maven 坐标中包含 classifier。需为 native jars
+      // 创建下载任务。
       {
-        cJSON *dl     = cJSON_GetObjectItem(lib, "downloads");
+        cJSON *dl = cJSON_GetObjectItem(lib, "downloads");
         cJSON *clsfrs = dl ? cJSON_GetObjectItem(dl, "classifiers") : NULL;
         if (clsfrs && cJSON_IsObject(clsfrs)) {
           cJSON *clsfr = clsfrs->child;
           while (clsfr) {
-            if (cJSON_IsObject(clsfr) && strncmp(clsfr->string, "natives-", 8) == 0) {
+            if (cJSON_IsObject(clsfr) &&
+                strncmp(clsfr->string, "natives-", 8) == 0) {
               cJSON *cl_path = cJSON_GetObjectItem(clsfr, "path");
-              cJSON *cl_url  = cJSON_GetObjectItem(clsfr, "url");
-              if (cl_path && cJSON_IsString(cl_path) &&
-                  cl_url  && cJSON_IsString(cl_url)) {
+              cJSON *cl_url = cJSON_GetObjectItem(clsfr, "url");
+              if (cl_path && cJSON_IsString(cl_path) && cl_url &&
+                  cJSON_IsString(cl_url)) {
                 DlTask *nt = &tasks[tcount];
-                snprintf(nt->dest, sizeof(nt->dest), "%s/libraries/%s",
-                         mcdir, cl_path->valuestring);
+                snprintf(nt->dest, sizeof(nt->dest), "%s/libraries/%s", mcdir,
+                         cl_path->valuestring);
                 snprintf(nt->url, sizeof(nt->url), "%s", cl_url->valuestring);
                 snprintf(nt->label, sizeof(nt->label), "[natives] %s",
                          cl_path->valuestring);
@@ -2212,8 +2475,11 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
         if (nm && cJSON_IsString(nm)) {
           const char *ns = nm->valuestring;
           int colons = 0;
-          for (const char *p = ns; *p; p++) if (*p == ':') colons++;
-          if (colons == 2 && strncmp(ns, "net.minecraftforge:forge:", 24) == 0) {
+          for (const char *p = ns; *p; p++)
+            if (*p == ':')
+              colons++;
+          if (colons == 2 &&
+              strncmp(ns, "net.minecraftforge:forge:", 24) == 0) {
             char newname[256];
             snprintf(newname, sizeof(newname), "%s:universal", ns);
             cJSON_ReplaceItemInObject(lib, "name", cJSON_CreateString(newname));
@@ -2236,8 +2502,8 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   // c) 原版 client.jar（放到当前版本目录，命名为 custom_name.jar）
   {
     char client_jar_path[600];
-    snprintf(client_jar_path, sizeof(client_jar_path),
-             "%s/%s.jar", version_dir, custom_name);
+    snprintf(client_jar_path, sizeof(client_jar_path), "%s/%s.jar", version_dir,
+             custom_name);
     cJSON *downloads = cJSON_GetObjectItem(vanilla, "downloads");
     if (downloads) {
       cJSON *client = cJSON_GetObjectItem(downloads, "client");
@@ -2289,7 +2555,8 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   }
   for (int rtry = 0; rtry < MAX_RETRIES && !g_cancel; rtry++) {
     int f = retry_failed(tasks, tcount, 8, &failed_names, &failed_count);
-    if (f == 0) break;
+    if (f == 0)
+      break;
   }
 
   if (failed_count > 0 && !g_cancel) {
@@ -2302,26 +2569,30 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
     failed_names = NULL;
     failed_count = 0;
   }
-  // ---- Phase 3c: 提取原生库 (.so/.dll/.dylib) 到 versions/<name>/natives/ ----
+  // ---- Phase 3c: 提取原生库 (.so/.dll/.dylib) 到 versions/<name>/natives/
+  // ----
   {
     char ndir[512];
     snprintf(ndir, sizeof(ndir), "%s/natives", version_dir);
     mkdir(ndir, 0755);
     int extracted = 0;
     for (int i = 0; i < tcount; i++) {
-      if (tasks[i].result != 0) continue;
+      if (tasks[i].result != 0)
+        continue;
       if (strstr(tasks[i].dest, "natives-") != NULL) {
         char cmd[2048];
-        snprintf(cmd, sizeof(cmd),
-                 "unzip -q -j -o '%s' '*.so' '*.dll' '*.dylib' -d '%s' 2>/dev/null",
-                 tasks[i].dest, ndir);
+        snprintf(
+            cmd, sizeof(cmd),
+            "unzip -q -j -o '%s' '*.so' '*.dll' '*.dylib' -d '%s' 2>/dev/null",
+            tasks[i].dest, ndir);
         if (!extracted) {
           printf("  Extracting native libraries...\n");
           extracted = 1;
         }
         printf("    %s\n", tasks[i].label);
         if (system(cmd) != 0) {
-          printf("    WARNING: native extraction failed for %s\n", tasks[i].label);
+          printf("    WARNING: native extraction failed for %s\n",
+                 tasks[i].label);
         }
       }
     }
@@ -2331,8 +2602,7 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   if (!g_cancel) {
     printf("\n  Writing self-contained version JSON...\n");
     // 以原版 vanilla JSON 为基础
-    cJSON_ReplaceItemInObject(vanilla, "id",
-                              cJSON_CreateString(custom_name));
+    cJSON_ReplaceItemInObject(vanilla, "id", cJSON_CreateString(custom_name));
     // 从 forge versionInfo 覆盖 mainClass
     {
       cJSON *fmc = cJSON_GetObjectItem(version_info, "mainClass");
@@ -2360,18 +2630,21 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
         cJSON *vl;
         cJSON_ArrayForEach(vl, vlibs) {
           cJSON *vn = cJSON_GetObjectItem(vl, "name");
-          if (!vn || !cJSON_IsString(vn)) continue;
+          if (!vn || !cJSON_IsString(vn))
+            continue;
           // 提取 group:artifact（忽略版本）
           const char *vfull = vn->valuestring;
           const char *last_colon = strrchr(vfull, ':');
-          if (!last_colon) continue;
+          if (!last_colon)
+            continue;
           size_t ga_len = (size_t)(last_colon - vfull);
           // 检查是否与任何 forge 库的 group:artifact 冲突
           int dup = 0;
           cJSON *fl;
           cJSON_ArrayForEach(fl, flibs) {
             cJSON *fn = cJSON_GetObjectItem(fl, "name");
-            if (!fn || !cJSON_IsString(fn)) continue;
+            if (!fn || !cJSON_IsString(fn))
+              continue;
             const char *ffull = fn->valuestring;
             const char *flast = strrchr(ffull, ':');
             if (flast && (size_t)(flast - ffull) == ga_len &&
@@ -2390,16 +2663,16 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
     }
     // 移除 inheritsFrom
     cJSON_DeleteItemFromObject(vanilla, "inheritsFrom");
-   // 添加 forge 元数据
-   {
-     cJSON *forge_meta = cJSON_CreateObject();
-     cJSON_AddStringToObject(forge_meta, "version", chosen_forge_ver);
-     cJSON_AddItemToObject(vanilla, "forge", forge_meta);
-   }
+    // 添加 forge 元数据
+    {
+      cJSON *forge_meta = cJSON_CreateObject();
+      cJSON_AddStringToObject(forge_meta, "version", chosen_forge_ver);
+      cJSON_AddItemToObject(vanilla, "forge", forge_meta);
+    }
     // 添加 gameVersion 供 init_versions 版本扫描时检测
     cJSON_AddStringToObject(vanilla, "gameVersion", mc_version);
-   // 写入文件
-   char *json_str = cJSON_Print(vanilla);
+    // 写入文件
+    char *json_str = cJSON_Print(vanilla);
     if (json_str) {
       FILE *jf = fopen(json_path, "w");
       if (jf) {
@@ -2418,7 +2691,10 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
       long asz = ftell(aif);
       rewind(aif);
       char *ai_data = malloc(asz + 1);
-      if (ai_data) { fread(ai_data, 1, asz, aif); ai_data[asz] = '\0'; }
+      if (ai_data) {
+        fread(ai_data, 1, asz, aif);
+        ai_data[asz] = '\0';
+      }
       fclose(aif);
 
       cJSON *ai_root = ai_data ? cJSON_Parse(ai_data) : NULL;
@@ -2430,13 +2706,16 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
           cJSON *obj_item;
           cJSON_ArrayForEach(obj_item, objects) {
             cJSON *hash_item = cJSON_GetObjectItem(obj_item, "hash");
-            if (!hash_item || !cJSON_IsString(hash_item)) continue;
+            if (!hash_item || !cJSON_IsString(hash_item))
+              continue;
             const char *hash = hash_item->valuestring;
             char dest[600];
             snprintf(dest, sizeof(dest), "%s/assets/objects/%c%c/%s", mcdir,
                      hash[0], hash[1], hash);
-            if (access(dest, F_OK) == 0) already++;
-            else need_dl++;
+            if (access(dest, F_OK) == 0)
+              already++;
+            else
+              need_dl++;
           }
 
           DlTask *atasks = malloc((need_dl + 1) * sizeof(DlTask));
@@ -2444,33 +2723,36 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
             int ac = 0;
             cJSON_ArrayForEach(obj_item, objects) {
               cJSON *hash_item = cJSON_GetObjectItem(obj_item, "hash");
-              if (!hash_item || !cJSON_IsString(hash_item)) continue;
+              if (!hash_item || !cJSON_IsString(hash_item))
+                continue;
               const char *hash = hash_item->valuestring;
               char first2[3] = {hash[0], hash[1], '\0'};
               char dest[600];
               snprintf(dest, sizeof(dest), "%s/assets/objects/%s/%s", mcdir,
                        first2, hash);
-              if (access(dest, F_OK) == 0) continue;
+              if (access(dest, F_OK) == 0)
+                continue;
               snprintf(atasks[ac].url, sizeof(atasks[ac].url),
-                       "https://resources.download.minecraft.net/%s/%s",
-                       first2, hash);
+                       "https://resources.download.minecraft.net/%s/%s", first2,
+                       hash);
               snprintf(atasks[ac].dest, sizeof(atasks[ac].dest), "%s", dest);
-              snprintf(atasks[ac].label, sizeof(atasks[ac].label),
-                       "[%d/%d] %s", ac + 1, need_dl, obj_item->string);
+              snprintf(atasks[ac].label, sizeof(atasks[ac].label), "[%d/%d] %s",
+                       ac + 1, need_dl, obj_item->string);
               ac++;
             }
             if (ac > 0) {
-              printf("\n  Assets: %d need download (%d already cached)\n\n",
-                     ac, already);
+              printf("\n  Assets: %d need download (%d already cached)\n\n", ac,
+                     already);
               dl_parallel(atasks, ac, num_threads);
               for (int rtry = 0; rtry < MAX_RETRIES && !g_cancel; rtry++) {
                 char **a_fail = NULL;
                 int a_fc = 0;
                 int f = retry_failed(atasks, ac, num_threads, &a_fail, &a_fc);
-                if (f == 0) break;
+                if (f == 0)
+                  break;
                 if (a_fc > 0) {
-                  failed_names = realloc(failed_names,
-                      (failed_count + a_fc) * sizeof(char *));
+                  failed_names = realloc(failed_names, (failed_count + a_fc) *
+                                                           sizeof(char *));
                   if (failed_names) {
                     for (int i = 0; i < a_fc; i++)
                       failed_names[failed_count++] = a_fail[i];
@@ -2504,9 +2786,11 @@ clean_tasks:
   }
 
   printf("\n=== Installation complete: %s ===\n", custom_name);
-  if (g_cancel) printf("  (cancelled by user)\n");
+  if (g_cancel)
+    printf("  (cancelled by user)\n");
   printf("Press Enter to return...\n");
-  while (getchar() != '\n') {}
+  while (getchar() != '\n') {
+  }
 
 done:
   cJSON_Delete(install_profile);
@@ -2525,26 +2809,28 @@ done:
 void do_forge_install(ConfigState *cstate, const char *mc_version,
                       const char *vanilla_url, const char *custom_name,
                       const char *modloader, const char *type,
-                      const ForgeConfig *fcfg,
-                      const char *forge_version) {
+                      const ForgeConfig *fcfg, const char *forge_version) {
   struct sigaction sa = {.sa_handler = on_sigint, .sa_flags = 0};
   sigemptyset(&sa.sa_mask);
   sigaction(SIGINT, &sa, NULL);
   g_cancel = 0;
   endwin();
 
- int num_threads = atoi(cstate->items[6].value);
- if (num_threads < 1) num_threads = 96;
- char *mcdir = cstate->items[2].value;
+  int num_threads = atoi(cstate->items[6].value);
+  if (num_threads < 1)
+    num_threads = 96;
+  char *mcdir = cstate->items[2].value;
 
   int asset_threads = atoi(cstate->items[7].value);
-  if (asset_threads < 1) asset_threads = 96;
+  if (asset_threads < 1)
+    asset_threads = 96;
 
- printf("\n=== Installing %s (%s / %s) ===\n", custom_name, mc_version,
-        fcfg->artifact_id);
-  printf("    Threads: %d (libs) / %d (assets)\n\n", num_threads, asset_threads);
+  printf("\n=== Installing %s (%s / %s) ===\n", custom_name, mc_version,
+         fcfg->artifact_id);
+  printf("    Threads: %d (libs) / %d (assets)\n\n", num_threads,
+         asset_threads);
 
- // 创建版本目录
+  // 创建版本目录
   char version_dir[512];
   snprintf(version_dir, sizeof(version_dir), "%s/versions/%s", mcdir,
            custom_name);
@@ -2558,21 +2844,22 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   char group_path[256];
   snprintf(group_path, sizeof(group_path), "%s", fcfg->group_id);
   for (char *p = group_path; *p; p++)
-    if (*p == '.') *p = '/';
+    if (*p == '.')
+      *p = '/';
 
   // ---- Phase 0: 确定 Forge/NeoForge 版本 ----
   char *chosen_forge_ver = NULL;
   if (forge_version && forge_version[0]) {
     // 版本已在 install_page 中预先选定
     chosen_forge_ver = strdup(forge_version);
-    if (!chosen_forge_ver) goto done;
+    if (!chosen_forge_ver)
+      goto done;
     printf("  %s version: %s (pre-selected)\n", fcfg->artifact_id,
            chosen_forge_ver);
   } else {
     // 拉取 Maven metadata，让用户选择版本
     char meta_url[1024];
-    snprintf(meta_url, sizeof(meta_url),
-             "https://%s/%s/%s/maven-metadata.xml",
+    snprintf(meta_url, sizeof(meta_url), "https://%s/%s/%s/maven-metadata.xml",
              fcfg->maven_base, group_path, fcfg->artifact_id);
 
     printf("  Fetching %s versions...\n", fcfg->artifact_id);
@@ -2585,20 +2872,26 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
     }
 
     FILE *mf = fopen("/tmp/tmcl_forge_meta.xml", "r");
-    if (!mf) { printf("ERROR: Failed to read Maven metadata.\n"); goto done; }
+    if (!mf) {
+      printf("ERROR: Failed to read Maven metadata.\n");
+      goto done;
+    }
     fseek(mf, 0, SEEK_END);
     long msz = ftell(mf);
     fseek(mf, 0, SEEK_SET);
     char *mdata = malloc(msz + 1);
-    if (!mdata) { fclose(mf); goto done; }
+    if (!mdata) {
+      fclose(mf);
+      goto done;
+    }
     fread(mdata, 1, msz, mf);
     mdata[msz] = '\0';
     fclose(mf);
 
     int fver_count = 0;
-    char **fversions = parse_maven_xml(mdata, mc_version, &fver_count,
-                                       /*neoforge_mode=*/(strcmp(modloader, "neoforge") == 0),
-                                       type);
+    char **fversions = parse_maven_xml(
+        mdata, mc_version, &fver_count,
+        /*neoforge_mode=*/(strcmp(modloader, "neoforge") == 0), type);
     free(mdata);
     remove("/tmp/tmcl_forge_meta.xml");
     if (!fversions || fver_count == 0) {
@@ -2608,7 +2901,8 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
     }
 
     chosen_forge_ver = pick_forge_version(fversions, fver_count, fcfg);
-    for (int i = 0; i < fver_count; i++) free(fversions[i]);
+    for (int i = 0; i < fver_count; i++)
+      free(fversions[i]);
     free(fversions);
     if (!chosen_forge_ver) {
       printf("  Cancelled by user.\n");
@@ -2620,9 +2914,9 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   // ---- Phase 1: 下载 installer jar 并提取 install_profile.json ----
   char installer_url[1024];
   snprintf(installer_url, sizeof(installer_url),
-           "https://%s/%s/%s/%s/%s-%s-installer.jar",
-           fcfg->maven_base, group_path, fcfg->artifact_id,
-           chosen_forge_ver, fcfg->artifact_id, chosen_forge_ver);
+           "https://%s/%s/%s/%s/%s-%s-installer.jar", fcfg->maven_base,
+           group_path, fcfg->artifact_id, chosen_forge_ver, fcfg->artifact_id,
+           chosen_forge_ver);
 
   char installer_path[600];
   snprintf(installer_path, sizeof(installer_path),
@@ -2641,8 +2935,7 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   printf("  Extracting install_profile.json...\n");
   char extract_cmd[1536];
   snprintf(extract_cmd, sizeof(extract_cmd),
-           "unzip -p '%s' install_profile.json 2>/dev/null",
-           installer_path);
+           "unzip -p '%s' install_profile.json 2>/dev/null", installer_path);
   FILE *ep = popen(extract_cmd, "r");
   char *profile_raw = NULL;
   size_t pcap = 0, plen = 0;
@@ -2691,14 +2984,16 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   cJSON *data = cJSON_GetObjectItem(install_profile, "data");
   int vi_owned = 0; // version_info 是否需要单独释放
 
-  // 新格式（Forge 1.20+）：versionInfo 在 jar 内独立文件中，通过 "json" 键指定路径
+  // 新格式（Forge 1.20+）：versionInfo 在 jar 内独立文件中，通过 "json"
+  // 键指定路径
   if (!version_info) {
     cJSON *jpath = cJSON_GetObjectItem(install_profile, "json");
     if (jpath && cJSON_IsString(jpath)) {
       printf("  New installer format: extracting %s...\n", jpath->valuestring);
       // zip 内部路径不以 / 开头，去掉前导 /
       const char *inner_path = jpath->valuestring;
-      while (*inner_path == '/') inner_path++;
+      while (*inner_path == '/')
+        inner_path++;
       char vext[1536];
       snprintf(vext, sizeof(vext), "unzip -p '%s' '%s' 2>/dev/null",
                installer_path, inner_path);
@@ -2712,7 +3007,11 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
           if (vlen + vcl + 1 > vcap) {
             vcap = vcap ? vcap * 2 : 16384;
             void *nv = realloc(ver_raw, vcap);
-            if (!nv) { free(ver_raw); ver_raw = NULL; break; }
+            if (!nv) {
+              free(ver_raw);
+              ver_raw = NULL;
+              break;
+            }
             ver_raw = nv;
           }
           memcpy(ver_raw + vlen, vchunk, vcl);
@@ -2723,7 +3022,8 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
         if (ver_raw) {
           version_info = cJSON_Parse(ver_raw);
           free(ver_raw);
-          if (version_info) vi_owned = 1;
+          if (version_info)
+            vi_owned = 1;
         }
       }
     }
@@ -2754,7 +3054,12 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
     long vsz = ftell(vf);
     fseek(vf, 0, SEEK_SET);
     char *vd = malloc(vsz + 1);
-    if (vd) { fread(vd, 1, vsz, vf); vd[vsz] = '\0'; vanilla = cJSON_Parse(vd); free(vd); }
+    if (vd) {
+      fread(vd, 1, vsz, vf);
+      vd[vsz] = '\0';
+      vanilla = cJSON_Parse(vd);
+      free(vd);
+    }
     fclose(vf);
   }
   if (!vanilla) {
@@ -2765,7 +3070,8 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   // ---- Phase 3: 收集所有下载任务 ----
   DlTask *tasks = malloc(8192 * sizeof(DlTask));
   int tcount = 0;
-  // 8192 slots is far beyond practical max (~200 files), so no bounds check needed
+  // 8192 slots is far beyond practical max (~200 files), so no bounds check
+  // needed
 
   // a) 原版 libraries（从 vanilla JSON）
   cJSON *v_libs = cJSON_GetObjectItem(vanilla, "libraries");
@@ -2773,11 +3079,13 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   if (v_libs && cJSON_IsArray(v_libs)) {
     cJSON *lib;
     cJSON_ArrayForEach(lib, v_libs) {
-      if (lib_rules_ok(cJSON_GetObjectItem(lib, "rules"))) vlib_count++;
+      if (lib_rules_ok(cJSON_GetObjectItem(lib, "rules")))
+        vlib_count++;
     }
     int cur = 0;
     cJSON_ArrayForEach(lib, v_libs) {
-      if (!lib_rules_ok(cJSON_GetObjectItem(lib, "rules"))) continue;
+      if (!lib_rules_ok(cJSON_GetObjectItem(lib, "rules")))
+        continue;
       cur++;
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
@@ -2882,13 +3190,15 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   }
   for (int rtry = 0; rtry < MAX_RETRIES && !g_cancel; rtry++) {
     if (failed_names) {
-      for (int k = 0; k < failed_count; k++) free(failed_names[k]);
+      for (int k = 0; k < failed_count; k++)
+        free(failed_names[k]);
       free(failed_names);
       failed_names = NULL;
       failed_count = 0;
     }
     int f = retry_failed(tasks, tcount, 8, &failed_names, &failed_count);
-    if (f == 0) break;
+    if (f == 0)
+      break;
   }
 
   if (failed_count > 0 && !g_cancel) {
@@ -2910,18 +3220,21 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
     cJSON *proc;
     int pi = 0;
     cJSON_ArrayForEach(proc, processors) {
-      if (g_cancel) break;
+      if (g_cancel)
+        break;
       pi++;
       printf("  [%d/%d]", pi, ptotal);
-      if (run_forge_processor(proc, mcdir, version_dir, custom_name,
-                              data, &outputs) != 0) {
+      if (run_forge_processor(proc, mcdir, version_dir, custom_name, data,
+                              &outputs) != 0) {
         printf("  ERROR: Processor %d failed.\n", pi);
-        if (outputs) cJSON_Delete(outputs);
+        if (outputs)
+          cJSON_Delete(outputs);
         // 继续执行后续 processor（有些 processor 可选）
         outputs = NULL;
       }
     }
-    if (outputs) cJSON_Delete(outputs);
+    if (outputs)
+      cJSON_Delete(outputs);
   }
 
   // installer jar 现在可以安全清理（processor 需要的文件已提取到 /tmp）
@@ -2930,9 +3243,8 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
   // ---- Phase 6: 生成自包含 version JSON ----
   if (!g_cancel) {
     printf("\n  Merging version JSON...\n");
-    if (merge_forge_version_json(vanilla, version_info, custom_name,
-                                  mc_version, modloader, chosen_forge_ver,
-                                  json_path) != 0) {
+    if (merge_forge_version_json(vanilla, version_info, custom_name, mc_version,
+                                 modloader, chosen_forge_ver, json_path) != 0) {
       printf("ERROR: Failed to merge version JSON.\n");
     }
   }
@@ -2945,7 +3257,10 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
       long asz = ftell(aif);
       fseek(aif, 0, SEEK_SET);
       char *ai_data = malloc(asz + 1);
-      if (ai_data) { fread(ai_data, 1, asz, aif); ai_data[asz] = '\0'; }
+      if (ai_data) {
+        fread(ai_data, 1, asz, aif);
+        ai_data[asz] = '\0';
+      }
       fclose(aif);
 
       cJSON *ai_root = ai_data ? cJSON_Parse(ai_data) : NULL;
@@ -2956,48 +3271,55 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
           cJSON *obj_item;
           cJSON_ArrayForEach(obj_item, objects) {
             cJSON *hash_item = cJSON_GetObjectItem(obj_item, "hash");
-            if (!hash_item || !cJSON_IsString(hash_item)) continue;
+            if (!hash_item || !cJSON_IsString(hash_item))
+              continue;
             const char *hash = hash_item->valuestring;
             char dest[600];
             snprintf(dest, sizeof(dest), "%s/assets/objects/%c%c/%s", mcdir,
                      hash[0], hash[1], hash);
-            if (access(dest, F_OK) == 0) already++;
-            else need_dl++;
+            if (access(dest, F_OK) == 0)
+              already++;
+            else
+              need_dl++;
           }
 
           DlTask *atasks = malloc((need_dl + 1) * sizeof(DlTask));
           int ac = 0;
           cJSON_ArrayForEach(obj_item, objects) {
             cJSON *hash_item = cJSON_GetObjectItem(obj_item, "hash");
-            if (!hash_item || !cJSON_IsString(hash_item)) continue;
+            if (!hash_item || !cJSON_IsString(hash_item))
+              continue;
             const char *hash = hash_item->valuestring;
             char first2[3] = {hash[0], hash[1], '\0'};
             char dest[600];
             snprintf(dest, sizeof(dest), "%s/assets/objects/%s/%s", mcdir,
                      first2, hash);
-            if (access(dest, F_OK) == 0) continue;
+            if (access(dest, F_OK) == 0)
+              continue;
             snprintf(atasks[ac].url, sizeof(atasks[ac].url),
                      "https://resources.download.minecraft.net/%s/%s", first2,
                      hash);
-            // path may be up to 600 bytes; DlTask.dest is 512 — use strncpy with explicit truncation guard
+            // path may be up to 600 bytes; DlTask.dest is 512 — use strncpy
+            // with explicit truncation guard
             strncpy(atasks[ac].dest, dest, sizeof(atasks[ac].dest) - 1);
             atasks[ac].dest[sizeof(atasks[ac].dest) - 1] = '\0';
-            snprintf(atasks[ac].label, sizeof(atasks[ac].label),
-                     "[%d/%d] %s", ac + 1, need_dl, obj_item->string);
+            snprintf(atasks[ac].label, sizeof(atasks[ac].label), "[%d/%d] %s",
+                     ac + 1, need_dl, obj_item->string);
             ac++;
           }
           if (ac > 0) {
-            printf("\n  Assets: %d need download (%d already cached)\n\n",
-                   ac, already);
+            printf("\n  Assets: %d need download (%d already cached)\n\n", ac,
+                   already);
             dl_parallel(atasks, ac, num_threads);
             for (int rtry = 0; rtry < MAX_RETRIES && !g_cancel; rtry++) {
               char **a_fail = NULL;
               int a_fc = 0;
               int f = retry_failed(atasks, ac, num_threads, &a_fail, &a_fc);
-              if (f == 0) break;
+              if (f == 0)
+                break;
               if (a_fc > 0) {
                 failed_names = realloc(failed_names,
-                    (failed_count + a_fc) * sizeof(char *));
+                                       (failed_count + a_fc) * sizeof(char *));
                 for (int i = 0; i < a_fc; i++)
                   failed_names[failed_count++] = a_fail[i];
                 free(a_fail);
@@ -3018,7 +3340,8 @@ forge_cancelled:
   // 清理
   free(tasks);
   cJSON_Delete(vanilla);
-  if (vi_owned) cJSON_Delete(version_info);
+  if (vi_owned)
+    cJSON_Delete(version_info);
   cJSON_Delete(install_profile);
   free(chosen_forge_ver);
   remove(vanilla_json_path);
@@ -3035,9 +3358,11 @@ forge_cancelled:
   }
 
   printf("\n=== Installation complete: %s ===\n", custom_name);
-  if (g_cancel) printf("  (cancelled by user)\n");
+  if (g_cancel)
+    printf("  (cancelled by user)\n");
   printf("Press Enter to return...\n");
-  while (getchar() != '\n') {}
+  while (getchar() != '\n') {
+  }
 
 done:
   sa.sa_handler = SIG_DFL;

@@ -136,6 +136,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   // 处理配置项选择
   switch (ch) {
   case 'j': // 向下选择
+    case KEY_DOWN:
     if (state->selected_item < state->item_count - 3) { // 最后 2 项不可选
       state->selected_item++;
       int visible_rows = row - 10;
@@ -145,6 +146,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
     }
     break;
   case 'k': // 向上选择
+    case KEY_UP:
     if (state->selected_item > 0) {
       state->selected_item--;
       if (state->selected_item < state->scroll_offset) {
@@ -161,10 +163,12 @@ void config_page(int ch, int *middlep, ConfigState *state) {
     if (state->selected_item >= 0 && state->selected_item < state->item_count) {
       reset_config(state);
       break;
-    case 'h':                        // 在操作间向左移动
+    case 'h':
+    case KEY_LEFT:
       *middlep = (*middlep + 1) % 2; // 循环向左（2个操作）
       break;
-    case 'l':                        // 在操作间向右移动
+    case 'l':
+    case KEY_RIGHT:
       *middlep = (*middlep + 1) % 2; // 循环向右（2个操作）
       break;
     case '\n':
