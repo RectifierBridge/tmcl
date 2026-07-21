@@ -927,13 +927,15 @@ void pin_version(VersionState *state, ConfigState *ConfigState) {
 
 // mod函数 — 打开模组列表
 void mod(VersionState *state, int index, ConfigState *ConfigState) {
-  if (index < 0 || index >= state->version_count)
+  if (index < 0 || index >= state->version_count) {
+    { char t[64]; snprintf(t, sizeof(t), "echo idx=%%d cnt=%%d > /tmp/mod_idx", index, state->version_count); system(t); }
     return;
+  }
 
   // 构建版本目录路径
   char version_dir[1024];
-  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s",
-           ConfigState->items[2].value, state->versions[index].version);
+ snprintf(version_dir, sizeof(version_dir), "%s/versions/%s",
+           ConfigState->items[2].value, state->versions[index].name);
 
   ModState mstate;
   mod_init(&mstate, state->versions[index].name, version_dir,
