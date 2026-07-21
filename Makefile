@@ -1,6 +1,6 @@
 # 定义变量
 CC = gcc
-CFLAGS = -Wall -c -Isrc -Isrc/account -Isrc/config -Isrc/version -Isrc/home
+CFLAGS = -Wall -c -Isrc -Isrc/account -Isrc/config -Isrc/version -Isrc/home -Isrc/mod
 LIBS = -lncurses -lcjson -lpthread
 TARGET = tmcl
 
@@ -9,7 +9,8 @@ SOURCES := $(wildcard src/*.c) \
            $(wildcard src/home/*.c) \
            $(wildcard src/account/*.c) \
            $(wildcard src/config/*.c) \
-           $(wildcard src/version/*.c)
+           $(wildcard src/version/*.c) \
+           $(wildcard src/mod/*.c)
 
 # 生成对应的目标文件路径
 OBJS := $(patsubst src/%,build/%,$(SOURCES:.c=.o))

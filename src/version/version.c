@@ -3,6 +3,7 @@
 #include "../account/account.h"
 #include "../config/config.h"
 #include "install.h"
+#include "../mod/mod.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
 #include <ncurses.h>
@@ -924,10 +925,23 @@ void pin_version(VersionState *state, ConfigState *ConfigState) {
   config_write(ConfigState);
 }
 
-// mod函数
-void mod(VersionState *state, int index) {
+// mod函数 — 打开模组列表
+void mod(VersionState *state, int index, ConfigState *ConfigState) {
   if (index < 0 || index >= state->version_count)
     return;
+
+  // 构建版本目录路径
+  char version_dir[1024];
+  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s",
+           ConfigState->items[2].value, state->versions[index].version);
+
+  ModState mstate;
+  mod_init(&mstate, state->versions[index].name, version_dir,
+           state->versions[index].modloader,
+           strcmp(ConfigState->items[8].value, "no") == 0 ? 0 : 1,
+           ConfigState->items[2].value);
+  mod_page(&mstate);
+  mod_cleanup(&mstate);
 }
 // 重命名版本函数
 void rename_version(VersionState *state, int index, ConfigState *ConfigState) {
@@ -1377,7 +1391,7 @@ void version_page(int ch, int *middlep, VersionState *state,
     break;
   case 'm':
     *middlep = 1;
-    mod(state, state->selected_version);
+    mod(state, state->selected_version, ConfigState);
     break;
   case 'p':
     *middlep = 2;
@@ -1405,7 +1419,7 @@ void version_page(int ch, int *middlep, VersionState *state,
       begin_version(state, ConfigState);
       break;
     case 1: // mod
-      mod(state, state->selected_version);
+      mod(state, state->selected_version, ConfigState);
       break;
     case 2: // pin
       pin_version(state, ConfigState);
