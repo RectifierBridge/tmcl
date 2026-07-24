@@ -33,7 +33,6 @@ void home_page(int ch, int *middlep, HomeState *state,
 
   int row, col;
   getmaxyx(stdscr, row, col);
-  int cur_row, cur_col;
 
   // print hellow
   printw("\n\nWelcome to:\n\n");
@@ -81,6 +80,8 @@ void home_page(int ch, int *middlep, HomeState *state,
       "please bear with us. That said, you are also welcome to join us.\n"
       "  Buy us a coffee-it really means a lot to us, even a single dollar "
       "counts.\n\n");
+
+  int cur_row, cur_col;
   getyx(stdscr, cur_row, cur_col);
   mvprintw(cur_row, col - 27, "contact:");
   mvprintw(cur_row + 1, col - 27, "aleph0: fossrina@163.com");

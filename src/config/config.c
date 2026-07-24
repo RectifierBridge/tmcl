@@ -16,7 +16,7 @@ void config_init(ConfigState *state) {
   char *home_dir = getenv("HOME");
   strcpy(state->home_dir, home_dir);
   state->item_count = 11;
- state->items = malloc(state->item_count * sizeof(ConfigItem));
+  state->items = malloc(state->item_count * sizeof(ConfigItem));
 
   // 打开tmcl目录
   char tmcl_dir[1024];
@@ -29,15 +29,13 @@ void config_init(ConfigState *state) {
 
   char game_dir[1024];
   snprintf(game_dir, sizeof(game_dir), "%s/.minecraft", home_dir);
- char *keys[] = {"java_path",      "memory",          "game_dir",
-                 "jvm_args",       "download_cource", "mod_source",
+  char *keys[] = {"java_path",      "memory",          "game_dir",
+                  "jvm_args",       "download_cource", "mod_source",
                   "lib_threads",    "ast_threads",     "isolate",
-                 "pinned_version",
-                 "last_play"};
- char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
-                           "Official",       "CurseForge", "16",     "96",
-                           "yes",
-                           "",               ""};
+                  "pinned_version", "last_play"};
+  char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
+                            "Official",      "CurseForge", "16",     "96",
+                            "yes",           "",           ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -136,7 +134,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
   // 处理配置项选择
   switch (ch) {
   case 'j': // 向下选择
-    case KEY_DOWN:
+  case KEY_DOWN:
     if (state->selected_item < state->item_count - 3) { // 最后 2 项不可选
       state->selected_item++;
       int visible_rows = row - 10;
@@ -146,7 +144,7 @@ void config_page(int ch, int *middlep, ConfigState *state) {
     }
     break;
   case 'k': // 向上选择
-    case KEY_UP:
+  case KEY_UP:
     if (state->selected_item > 0) {
       state->selected_item--;
       if (state->selected_item < state->scroll_offset) {
@@ -244,21 +242,26 @@ void config_page(int ch, int *middlep, ConfigState *state) {
 // 自动检测系统可用内存并返回合适的 Minecraft 内存分配（MB）
 static int detect_memory_mb() {
   FILE *f = fopen("/proc/meminfo", "r");
-  if (!f) return 2048;
+  if (!f)
+    return 2048;
   char line[256];
   long mem_kb = 0;
   while (fgets(line, sizeof(line), f)) {
-    if (sscanf(line, "MemAvailable: %ld", &mem_kb) == 1) break;
+    if (sscanf(line, "MemAvailable: %ld", &mem_kb) == 1)
+      break;
     if (sscanf(line, "MemTotal: %ld", &mem_kb) == 1) {
-      mem_kb = mem_kb * 4 / 5; // 80% of total as fallback
+      mem_kb = mem_kb * 7 / 10; // 70% of total as fallback
       break;
     }
   }
   fclose(f);
-  if (mem_kb <= 0) return 2048;
+  if (mem_kb <= 0)
+    return 2048;
   int mb = (int)((double)mem_kb / 1024 * 0.70);
-  if (mb < 512) mb = 512;
-  if (mb > 32768) mb = 32768;
+  if (mb < 512)
+    mb = 512;
+  if (mb > 32768)
+    mb = 32768;
   return mb;
 }
 
@@ -284,7 +287,7 @@ void change_config(ConfigState *state) {
   const char *key = state->items[idx].key;
 
   if (strcmp(key, "memory") == 0) {
-   // ---- memory 配置：支持 "auto" 和手动输入数字 ----
+    // ---- memory 配置：支持 "auto" 和手动输入数字 ----
     echo();
     curs_set(1);
     clear();
@@ -298,15 +301,15 @@ void change_config(ConfigState *state) {
     if (strcmp(input, "") != 0) {
       if (strcmp(input, "auto") == 0) {
         int mb = detect_memory_mb();
-        snprintf(state->items[idx].value,
-                 sizeof(state->items[idx].value), "auto(%d)", mb);
+        snprintf(state->items[idx].value, sizeof(state->items[idx].value),
+                 "auto(%d)", mb);
       } else {
         // 验证是否为纯数字
         char *end;
         long val = strtol(input, &end, 10);
         if (*end == '\0' && val > 0) {
-          snprintf(state->items[idx].value,
-                   sizeof(state->items[idx].value), "%ld", val);
+          snprintf(state->items[idx].value, sizeof(state->items[idx].value),
+                   "%ld", val);
         }
         // 无效输入 → 不更新，保持原值
       }
@@ -326,18 +329,23 @@ void change_config(ConfigState *state) {
       mvprintw(5, 2, "Current: %s", state->items[idx].value);
       mvprintw(7, 2, "Select (j/k: switch, Enter: confirm, q: cancel):");
       for (int i = 0; i < 2; i++) {
-        if (i == sel) attron(A_REVERSE);
+        if (i == sel)
+          attron(A_REVERSE);
         mvprintw(9 + i, 4, "%s", opts[i]);
-        if (i == sel) attroff(A_REVERSE);
+        if (i == sel)
+          attroff(A_REVERSE);
       }
       int c = getch();
-      if (c == 'j' || c == 'l') sel = 1;
-      else if (c == 'k' || c == 'h') sel = 0;
+      if (c == 'j' || c == 'l')
+        sel = 1;
+      else if (c == 'k' || c == 'h')
+        sel = 0;
       else if (c == '\n') {
         strcpy(state->items[idx].value, opts[sel]);
         config_write(state);
         break;
-      } else if (c == 'q') break;
+      } else if (c == 'q')
+        break;
     }
     clear();
 
@@ -351,22 +359,28 @@ void change_config(ConfigState *state) {
       mvprintw(5, 2, "Current: %s", state->items[idx].value);
       mvprintw(7, 2, "Select (j/k: switch, Enter: confirm, q: cancel):");
       for (int i = 0; i < 2; i++) {
-        if (i == sel) attron(A_REVERSE);
+        if (i == sel)
+          attron(A_REVERSE);
         mvprintw(9 + i, 4, "%s", opts[i]);
-        if (i == sel) attroff(A_REVERSE);
+        if (i == sel)
+          attroff(A_REVERSE);
       }
       int c = getch();
-      if (c == 'j' || c == 'l') sel = 1;
-      else if (c == 'k' || c == 'h') sel = 0;
+      if (c == 'j' || c == 'l')
+        sel = 1;
+      else if (c == 'k' || c == 'h')
+        sel = 0;
       else if (c == '\n') {
         strcpy(state->items[idx].value, opts[sel]);
         config_write(state);
         break;
-      } else if (c == 'q') break;
+      } else if (c == 'q')
+        break;
     }
     clear();
 
-  } else if (strcmp(key, "lib_threads") == 0 || strcmp(key, "ast_threads") == 0) {
+  } else if (strcmp(key, "lib_threads") == 0 ||
+             strcmp(key, "ast_threads") == 0) {
     // ---- 下载线程数：正整数输入 ----
     echo();
     curs_set(1);
@@ -403,18 +417,23 @@ void change_config(ConfigState *state) {
       mvprintw(8, 2, "no  = all versions share .minecraft");
       mvprintw(10, 2, "Select (j/k: switch, Enter: confirm, q: cancel):");
       for (int i = 0; i < 2; i++) {
-        if (i == sel) attron(A_REVERSE);
+        if (i == sel)
+          attron(A_REVERSE);
         mvprintw(12 + i, 4, "%s", opts[i]);
-        if (i == sel) attroff(A_REVERSE);
+        if (i == sel)
+          attroff(A_REVERSE);
       }
       int c = getch();
-      if (c == 'j' || c == 'l') sel = 1;
-      else if (c == 'k' || c == 'h') sel = 0;
+      if (c == 'j' || c == 'l')
+        sel = 1;
+      else if (c == 'k' || c == 'h')
+        sel = 0;
       else if (c == '\n') {
         strcpy(state->items[idx].value, opts[sel]);
         config_write(state);
         break;
-      } else if (c == 'q') break;
+      } else if (c == 'q')
+        break;
     }
     clear();
 

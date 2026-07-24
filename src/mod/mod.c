@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 // mod.c — 模组列表管理
 #include "mod.h"
+#include "new_mod.h"
 #include <dirent.h>
 #include <ncurses.h>
 #include <stdio.h>
@@ -15,11 +16,12 @@ extern int modloader_color(const char *modloader, int selected);
 // ---- 初始化模组列表 ----
 void mod_init(ModState *state, const char *version_name,
               const char *version_dir, const char *modloader, int isolated,
-              const char *game_dir) {
+              const char *game_dir, const char *version) {
   memset(state, 0, sizeof(*state));
   strncpy(state->version_name, version_name, sizeof(state->version_name) - 1);
   strncpy(state->version_dir, version_dir, sizeof(state->version_dir) - 1);
   strncpy(state->modloader, modloader, sizeof(state->modloader) - 1);
+  strncpy(state->version, version, sizeof(state->version) - 1);
 
   // 确定 mods 目录
   if (isolated) {
@@ -84,25 +86,23 @@ static void render_mod_list(ModState *state, int row, int col) {
   clear();
 
   // 标题: Mods for: <version_name> (<modloader>)
-  int title_y = 0;
+  mvprintw(0, 0, "Mods for: ");
   attron(A_BOLD);
-  mvprintw(title_y, 0, "Mods for: %s (", state->version_name);
+  printw("%s", state->version_name);
   attroff(A_BOLD);
 
   // modloader 带色
+  printw(" (");
   int mc = modloader_color(state->modloader, 0);
   if (mc)
-    attron(mc);
+    attron(COLOR_PAIR(mc));
   printw("%s", state->modloader);
   if (mc)
-    attroff(mc);
-
-  attron(A_BOLD);
+    attroff(COLOR_PAIR(mc));
   printw(")");
-  attroff(A_BOLD);
 
   // 表头
-  int head_y = title_y + 1;
+  int head_y = 2;
   mvprintw(head_y, 3, "Able  Name");
   mvprintw(head_y + 1, 3, "----  ----");
 
@@ -132,7 +132,7 @@ static void render_mod_list(ModState *state, int row, int col) {
         attron(A_REVERSE);
 
       // Able 列: * 或空格
-      mvprintw(y, 2, "%c     ", state->disabled[idx] ? ' ' : '*');
+      mvprintw(y, 3, "%c     ", state->disabled[idx] ? ' ' : '*');
 
       // Name 列
       printw("%s", state->files[idx]);
@@ -156,7 +156,7 @@ static void render_mod_list(ModState *state, int row, int col) {
 }
 
 // ---- 主页面循环 ----
-void mod_page(ModState *state) {
+void mod_page(ModState *state, ConfigState *ConfigState) {
   int row, col;
   getmaxyx(stdscr, row, col);
 
@@ -221,10 +221,9 @@ void mod_page(ModState *state) {
 
     // --- New: 占位 ---
     if (action == 1) {
-      mvprintw(row - 1, 2,
-               "Mod download not yet implemented. Press any key...");
-      refresh();
-      getch();
+      NewModState NewModState = {0};
+      new_mod_init(&NewModState, state, ConfigState->items[5].value);
+      new_mod_page(&NewModState, ConfigState);
     }
 
     // --- Delete: 删除文件 ---
