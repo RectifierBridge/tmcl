@@ -1,6 +1,7 @@
 #include "new_mod.h"
 #include "../config/config.h"
 #include "mod.h"
+#include "mod_version_page.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
 #include <ncurses.h>
@@ -13,8 +14,8 @@
 
 // 来自 version.h 的颜色映射
 extern int modloader_color(const char *modloader, int selected);
-extern void action_install(NewModState *state);
 void action_search(NewModState *state, cJSON **mod_search_result);
+void action_install(NewModState *state);
 
 // ==== 读取整个文件内容到字符串（调用者需 free 返回的指针）====
 char *read_file_content(const char *filepath) {
@@ -69,11 +70,39 @@ void new_mod_init(NewModState *state, ModState *ModState, char *mod_source) {
   snprintf(state->modloader, sizeof(state->modloader), "%s",
            ModState->modloader);
   snprintf(state->mods_dir, sizeof(state->mods_dir), "%s", ModState->mods_dir);
-  snprintf(state->version, sizeof(state->version), "%s", ModState->version);
+  snprintf(state->mc_version, sizeof(state->mc_version), "%s",
+           ModState->version);
   snprintf(state->loader, sizeof(state->loader), "%s", ModState->modloader);
   snprintf(state->order, sizeof(state->order), "%s", "hot");
   snprintf(state->source, sizeof(state->source), "%s", mod_source);
   state->action_count = 5;
+}
+
+// ---------- 底部操作栏 ----------
+void rander_bottom(NewModState *state) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+
+  mvprintw(row - 3, 0, "%-*s", col, " ");
+  mvprintw(row - 2, 0, "%-*s", col, " ");
+  mvprintw(row - 1, 0, "%-*s", col, " ");
+  char *fmt[] = {"[i]nstall", "[v]ersion", "[m]odlader", "[s]ource",
+                 "[/]search"};
+  int cx = 0;
+  for (int i = 0; i < state->action_count; i++) {
+    if (i == state->action_sel)
+      attron(A_REVERSE);
+    mvprintw(row - 2, cx, "%s", fmt[i]);
+    if (i == state->action_sel)
+      attroff(A_REVERSE);
+    cx += 11;
+  }
+
+  mvprintw(row - 1, 0, "& detail");
+  mvprintw(row - 1, 11, "%s", state->mc_version);
+  mvprintw(row - 1, 22, "%s", state->loader);
+  mvprintw(row - 1, 33, "%s", state->source);
+  mvprintw(row - 1, 44, "%s", state->search);
 }
 
 // ========== 渲染打印 ==========
@@ -86,7 +115,6 @@ void rander_new_mod_page(NewModState *state, cJSON *root) {
   attron(A_BOLD);
   printw("%s", state->version_name);
   attroff(A_BOLD);
-
   // modloader 带色
   printw(" (");
   int mc = modloader_color(state->modloader, 0);
@@ -98,9 +126,9 @@ void rander_new_mod_page(NewModState *state, cJSON *root) {
   printw(")");
 
   // ---------- 中间 ----------
-  if (!root) {
+
+  if (!root)
     goto bottom;
-  }
 
   // ----- modrinth -----
   if (strcmp(state->source, "Modrinth") == 0) {
@@ -120,11 +148,17 @@ void rander_new_mod_page(NewModState *state, cJSON *root) {
             cJSON *mod_id = cJSON_GetObjectItem(item, "project_id");
             snprintf(state->mod_id, sizeof(state->mod_id), "%s",
                      mod_id->valuestring);
+            snprintf(state->mod_title, sizeof(state->mod_title), "%s",
+                     title->valuestring);
           }
           attron(A_BOLD);
+          attron(COLOR_PAIR(modloader_color(
+              "fabric", state->selected == i + state->scroll_offset)));
           mvprintw(2 + 2 * i, 0, "%2d %-*s", i + state->scroll_offset, col - 3,
                    title->valuestring);
           attroff(A_BOLD);
+          attroff(COLOR_PAIR(modloader_color(
+              "fabric", state->selected == i + state->scroll_offset)));
           mvprintw(3 + 2 * i, 0, "   %-*s", col - 3, description->valuestring);
           if (i + state->scroll_offset == state->selected)
             attroff(A_REVERSE);
@@ -137,30 +171,8 @@ void rander_new_mod_page(NewModState *state, cJSON *root) {
   if (strcmp(state->loader, "CurseForge")) {
   }
 
-  // cJSON_Delete(root);
-
-  // ---------- 底部操作栏 ----------
 bottom:
-  mvprintw(row - 3, 0, "%-*s", col, " ");
-  mvprintw(row - 2, 0, "%-*s", col, " ");
-  mvprintw(row - 1, 0, "%-*s", col, " ");
-  char *fmt[] = {"[i]nstall", "[v]ersion", "[m]odlader", "[s]ource",
-                 "[/]search"};
-  int cx = 0;
-  for (int i = 0; i < state->action_count; i++) {
-    if (i == state->action_sel)
-      attron(A_REVERSE);
-    mvprintw(row - 2, cx, "%s", fmt[i]);
-    if (i == state->action_sel)
-      attroff(A_REVERSE);
-    cx += 11;
-  }
-
-  mvprintw(row - 1, 0, "& detail");
-  mvprintw(row - 1, 11, "%s", state->version);
-  mvprintw(row - 1, 22, "%s", state->loader);
-  mvprintw(row - 1, 33, "%s", state->source);
-  mvprintw(row - 1, 44, "%s", state->search);
+  rander_bottom(state);
 }
 
 // ============ 主函数 ============
@@ -225,6 +237,7 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
 
     switch (action) {
     case 0:
+      rander_new_mod_page(state, mod_search_result);
       action_install(state);
       break;
     case 1:
@@ -241,8 +254,13 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
   clear();
 }
 
-// ---------- 搜索，下载json文件 ----------
-void mr_mod_search_json_dld(NewModState *state) {
+// ---------- 搜索之download json ----------
+// 单列出来是因为其他action也要用
+bool search_dld_json(NewModState *state) {
+  mvprintw(1, 0, "loading ......");
+  refresh();
+
+  // 下载json 文件
   if (strcmp(state->source, "Modrinth") == 0) {
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
@@ -253,14 +271,16 @@ void mr_mod_search_json_dld(NewModState *state) {
              "--data-urlencode 'versions=%s' "
              "--data-urlencode 'categories=%s' "
              "https://api.modrinth.com/v2/search",
-             state->search, state->version, state->loader);
+             state->search, state->mc_version, state->loader);
     if (system(cmd) != 0) {
       clear();
       mvprintw(3, 2, "FIELD !!!");
       mvprintw(4, 2, "Press any key to continue");
       getch();
+      return 1;
     }
   }
+  return 0;
 }
 
 // ---------- 搜索 ----------
@@ -276,13 +296,79 @@ void action_search(NewModState *state, cJSON **mod_search_result) {
   getnstr(input, sizeof(input) - 1);
   curs_set(0);
   noecho();
-
-  mvprintw(1, 0, "loading ......");
-  refresh();
-
   snprintf(state->search, sizeof(state->search), "%s", input);
-  mr_mod_search_json_dld(state);
+  if (search_dld_json(state) == 1) {
+    return;
+  }
   *mod_search_result = parse_json("/tmp/mod_search_result.json");
-
   state->selected = 0;
+  state->scroll_offset = 0;
+}
+
+// ---------- 安装和详情 ----------
+void action_install(NewModState *state) {
+  // ---------- modrinth ----------
+  if (strcmp(state->source, "Modrinth") == 0) {
+    mvprintw(1, 0, "loading ......");
+    refresh();
+
+    // ----- 下载json文件 -----
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 20 -o /tmp/mod_get_result.json "
+             "https://api.modrinth.com/v2/project/%s",
+             state->mod_id);
+    if (system(cmd) != 0) {
+      clear();
+      mvprintw(3, 2, "FIELD !!!");
+      mvprintw(4, 2, "Press any key to continue");
+      getch();
+      return;
+    }
+
+    // ----- 打开并解析json文件 -----
+    cJSON *get_root = parse_json("/tmp/mod_get_result.json");
+    if (!get_root) {
+      return;
+    }
+
+    // 渲染
+    clear();
+    int row, col;
+    getmaxyx(stdscr, row, col);
+    cJSON *title = cJSON_GetObjectItem(get_root, "title");
+    cJSON *description = cJSON_GetObjectItem(get_root, "description");
+    cJSON *downloads = cJSON_GetObjectItem(get_root, "downloads");
+    cJSON *followers = cJSON_GetObjectItem(get_root, "followers");
+    cJSON *body = cJSON_GetObjectItem(get_root, "body");
+    cJSON *server_side = cJSON_GetObjectItem(get_root, "server_side");
+    cJSON *client_side = cJSON_GetObjectItem(get_root, "client_side");
+    cJSON *mod_loaders = cJSON_GetObjectItem(get_root, "loaders");
+
+    move(0, 0);
+    printw("\n  >> %s <<\n\n", title->valuestring);
+    printw("dls: %-13d", downloads->valueint);
+    printw("fls: %-13d", followers->valueint);
+    printw("clt: %-13s", client_side->valuestring);
+    printw("svr: %-13s", server_side->valuestring);
+    printw("\nMod Loader:       ");
+    int arry_size = cJSON_GetArraySize(mod_loaders);
+    for (int i = 0; i < arry_size; i++) {
+      cJSON *loader_item = cJSON_GetArrayItem(mod_loaders, i);
+      int loader_color = modloader_color(loader_item->valuestring, 0);
+      attron(COLOR_PAIR(loader_color));
+      printw("%-18s", loader_item->valuestring);
+      attroff(COLOR_PAIR(loader_color));
+    }
+    printw("\n\n==> DESCRIPTION:\n%s\n\n", description->valuestring);
+    printw("==> DETAIL:\n%s", body->valuestring);
+    mvprintw(row - 1, 0, "%-*s", col, " ");
+    mvprintw(row - 2, 0, "%-*s", col, " ");
+    mvprintw(row - 1, 0, "Do you want to [i]nstall this mod? [Y/n]");
+    int ch = getch();
+    if (ch == 'y' || ch == 'Y' || ch == '\n' || ch == 'i') {
+      ModVersionState ModVersionState = {0};
+      mod_version_page(&ModVersionState, state);
+    }
+  }
 }

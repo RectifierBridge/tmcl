@@ -4,6 +4,7 @@
 #include "home/home.h"
 #include "job/job.h"
 #include "version/version.h"
+#include <locale.h>
 #include <ncurses.h>
 
 // 函数声明
@@ -20,6 +21,7 @@ int main() {
   ConfigState config_state = {0};
   AccountState account_state = {0};
 
+  setlocale(LC_ALL, "");
   initscr();
   curs_set(0); // 隐藏光标
   clear();
@@ -28,19 +30,21 @@ int main() {
   keypad(stdscr, TRUE);
   start_color();
   use_default_colors();
-  if (can_change_color()) { init_color(COLOR_WHITE, 1000, 1000, 1000); }
-  init_pair(1, COLOR_RED,     -1);
-  init_pair(2, COLOR_YELLOW,  -1);
-  init_pair(3, COLOR_GREEN,   -1);
+  if (can_change_color()) {
+    init_color(COLOR_WHITE, 1000, 1000, 1000);
+  }
+  init_pair(1, COLOR_RED, -1);
+  init_pair(2, COLOR_YELLOW, -1);
+  init_pair(3, COLOR_GREEN, -1);
   init_pair(4, COLOR_MAGENTA, -1);
 
   // 选中行反色高亮: 白底 + 对应文字色
   // 选中行反色高对: 配合 A_REVERSE 使用，fg=-1(终端默认前景) 经反转后成为背景色
   // A_REVERSE 交换 fg/bg：(-1, COLOR_RED) → (COLOR_RED 文字, -1 背景)
-  init_pair(6, -1, COLOR_RED);      // forge 选中
-  init_pair(7, -1, COLOR_YELLOW);   // neoforge 选中
-  init_pair(8, -1, COLOR_GREEN);    // fabric 选中
-  init_pair(9, -1, COLOR_MAGENTA);  // quilt 选中
+  init_pair(6, -1, COLOR_RED);     // forge 选中
+  init_pair(7, -1, COLOR_YELLOW);  // neoforge 选中
+  init_pair(8, -1, COLOR_GREEN);   // fabric 选中
+  init_pair(9, -1, COLOR_MAGENTA); // quilt 选中
 
   // 初始化所有页面数据
   config_init(&config_state);
