@@ -115,15 +115,11 @@ bool mod_version_init(ModVersionState *state, NewModState *NewModState) {
     }
     int arry_size = cJSON_GetArraySize(state->mod_version_root);
     state->count_all = arry_size;
-    cJSON *files = cJSON_GetObjectItem(version, "files");
-    cJSON *file0 = cJSON_GetArrayItem(files, 0);
-    cJSON *filename = cJSON_GetObjectItem(file0, "filename");
     state->filtered_versions = malloc(state->count_all * sizeof(cJSON *));
 
     // ---------- CurseForge ----------
   } else if (strcmp(NewModState->source, "CurseForge") == 0) {
   }
-
   return 0;
 }
 
@@ -205,6 +201,12 @@ void rander_mod_version(ModVersionState *state, NewModState *NewModState) {
       if (i + state->scroll_offset == state->selected)
         attroff(A_REVERSE);
     }
+    if (!state->filtered_versions) {
+      mvprintw(2, 3, "There is no vesion to install");
+      mvprintw(3, 3,
+               "You may change your fliter conditions (minecraft version and "
+               "modloader ) below.");
+    }
   }
 
   // ---------- bottom bar ----------
@@ -230,7 +232,28 @@ void rander_mod_version(ModVersionState *state, NewModState *NewModState) {
   mvprintw(row - 1, 33, "%s", state->install_as);
 }
 
-void aaction_install(ModVersionState *state) {}
+void aaction_install(ModVersionState *state) {
+  char cmd[2048];
+  cJSON *version = state->filtered_versions[state->selected];
+  cJSON *files = cJSON_GetObjectItem(version, "files");
+  cJSON *file0 = cJSON_GetArrayItem(files, 0);
+  cJSON *url = cJSON_GetObjectItem(file0, "url");
+
+  snprintf(cmd, sizeof(cmd), "curl -# -L -m 60 -o \"%s\" \"%s\"",
+           state->install_as, url->valuestring);
+  endwin();
+  // 执行下载
+  printf("\n");
+  if (system(cmd) != 0) {
+    // 处理下载失败
+    printf("\nFIELD ! you may check your network.");
+  } else {
+    printf("\nSuccess!");
+  }
+  printf("\nPress [ENTER] to return.");
+  getchar();
+  refresh();
+}
 
 // ========== 主函数 ==========
 void mod_version_page(ModVersionState *state, NewModState *NewModState) {
@@ -238,11 +261,12 @@ void mod_version_page(ModVersionState *state, NewModState *NewModState) {
     return;
   int pre_selected = -1;
   fliter_mod_version(state, NewModState);
+
   while (1) {
     int row, col;
     getmaxyx(stdscr, row, col);
 
-    if (state->selected != pre_selected) {
+    if (state->selected != pre_selected && state->count_flitered > 0) {
       cJSON *version = state->filtered_versions[state->selected];
       cJSON *files = cJSON_GetObjectItem(version, "files");
       cJSON *file0 = cJSON_GetArrayItem(files, 0);
@@ -307,6 +331,7 @@ void mod_version_page(ModVersionState *state, NewModState *NewModState) {
     switch (action) {
     case 0:
       aaction_install(state);
+      return;
       break;
     case 1:
       break;

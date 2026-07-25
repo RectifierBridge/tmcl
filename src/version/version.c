@@ -48,6 +48,8 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
   char versionDir[256];
 
   snprintf(versionDir, sizeof(versionDir), "%s/versions/", gameDir);
+  snprintf(state->game_dir, sizeof(state->game_dir), "%s",
+           ConfigState->items[2].value);
 
   DIR *dirp = opendir(versionDir);
   if (!dirp) {
@@ -68,7 +70,7 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
     if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0 &&
         entry->d_type == DT_DIR) {
 
-      char versionPath[300]; // 增加缓冲区大小
+      char versionPath[1024]; // 增加缓冲区大小
       snprintf(versionPath, sizeof(versionPath), "%s%s/", versionDir,
                entry->d_name);
 
@@ -77,8 +79,8 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
         continue; // 无法打开子目录，跳过
       }
 
-      char jsonName[150];
-      char jarName[150];
+      char jsonName[256];
+      char jarName[256];
       snprintf(jsonName, sizeof(jsonName), "%s.json", entry->d_name);
       snprintf(jarName, sizeof(jarName), "%s.jar", entry->d_name);
 
@@ -170,6 +172,7 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
                     '\0'; // 补充缺失的终止符
               }
             }
+
             // modloader 检查 fabric / forge / neoforge
             if (mod_loader_fabric) {
               strncpy(state->versions[count].modloader, "fabric",
@@ -241,6 +244,7 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
             state->versions[count].java_override[0] = '\0';
             state->versions[count].memory_override[0] = '\0';
             state->versions[count].jvm_args_extra[0] = '\0';
+            state->versions[count].isolate = 1;
 
             count++;
           }
@@ -940,7 +944,8 @@ void pin_version(VersionState *state, ConfigState *ConfigState) {
 }
 
 // mod函数 — 打开模组列表
-void mod(VersionState *state, int index, ConfigState *ConfigState) {
+void mod(VersionState *state, ConfigState *ConfigState) {
+  int index = state->selected_version;
   if (index < 0 || index >= state->version_count) {
     {
       char t[64];
@@ -951,19 +956,16 @@ void mod(VersionState *state, int index, ConfigState *ConfigState) {
     return;
   }
 
-  // 构建版本目录路径
-  char version_dir[1024];
-  snprintf(version_dir, sizeof(version_dir), "%s/versions/%s",
-           ConfigState->items[2].value, state->versions[index].name);
+  snprintf(state->selected_version_dir, sizeof(state->selected_version_dir),
+           "%s/versions/%s", ConfigState->items[2].value,
+           state->versions[index].name);
 
-  ModState mstate;
-  mod_init(&mstate, state->versions[index].name, version_dir,
-           state->versions[index].modloader,
-           strcmp(ConfigState->items[8].value, "no") == 0 ? 0 : 1,
-           ConfigState->items[2].value, state->versions[index].version);
-  mod_page(&mstate, ConfigState);
-  mod_cleanup(&mstate);
+  ModState mod_state = {0};
+  mod_init(&mod_state, state);
+  mod_page(&mod_state, state, ConfigState);
+  mod_cleanup(&mod_state);
 }
+
 // 重命名版本函数
 void rename_version(VersionState *state, int index, ConfigState *ConfigState) {
   if (index < 0 || index >= state->version_count || state->version_count == 0)
@@ -1459,7 +1461,7 @@ void version_page(int ch, int *middlep, VersionState *state,
     break;
   case 'm':
     *middlep = 1;
-    mod(state, state->selected_version, ConfigState);
+    mod(state, ConfigState);
     break;
   case 'p':
     *middlep = 2;
@@ -1487,7 +1489,7 @@ void version_page(int ch, int *middlep, VersionState *state,
       begin_version(state, ConfigState);
       break;
     case 1: // mod
-      mod(state, state->selected_version, ConfigState);
+      mod(state, ConfigState);
       break;
     case 2: // pin
       pin_version(state, ConfigState);

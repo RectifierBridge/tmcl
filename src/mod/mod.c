@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 // mod.c — 模组列表管理
 #include "mod.h"
+#include "../version/version.h"
 #include "new_mod.h"
 #include <dirent.h>
 #include <ncurses.h>
@@ -14,20 +15,29 @@
 extern int modloader_color(const char *modloader, int selected);
 
 // ---- 初始化模组列表 ----
-void mod_init(ModState *state, const char *version_name,
-              const char *version_dir, const char *modloader, int isolated,
-              const char *game_dir, const char *version) {
+void mod_init(ModState *state, VersionState *VersionState) {
   memset(state, 0, sizeof(*state));
-  strncpy(state->version_name, version_name, sizeof(state->version_name) - 1);
-  strncpy(state->version_dir, version_dir, sizeof(state->version_dir) - 1);
-  strncpy(state->modloader, modloader, sizeof(state->modloader) - 1);
-  strncpy(state->version, version, sizeof(state->version) - 1);
+  bool isolated =
+      VersionState->versions[VersionState->selected_version].isolate;
+  strncpy(state->version_name,
+          VersionState->versions[VersionState->selected_version].name,
+          sizeof(state->version_name) - 1);
+  strncpy(state->version_dir, VersionState->selected_version_dir,
+          sizeof(state->version_dir) - 1);
+  strncpy(state->modloader,
+          VersionState->versions[VersionState->selected_version].modloader,
+          sizeof(state->modloader) - 1);
+  strncpy(state->version,
+          VersionState->versions[VersionState->selected_version].version,
+          sizeof(state->version) - 1);
 
   // 确定 mods 目录
   if (isolated) {
-    snprintf(state->mods_dir, sizeof(state->mods_dir), "%s/mods", version_dir);
+    snprintf(state->mods_dir, sizeof(state->mods_dir), "%s/mods",
+             state->version_dir);
   } else {
-    snprintf(state->mods_dir, sizeof(state->mods_dir), "%s/mods", game_dir);
+    snprintf(state->mods_dir, sizeof(state->mods_dir), "%s/mods",
+             VersionState->game_dir);
   }
 
   // 创建目录（如果不存在）
@@ -156,7 +166,8 @@ static void render_mod_list(ModState *state, int row, int col) {
 }
 
 // ---- 主页面循环 ----
-void mod_page(ModState *state, ConfigState *ConfigState) {
+void mod_page(ModState *state, VersionState *VersionState,
+              ConfigState *ConfigState) {
   int row, col;
   getmaxyx(stdscr, row, col);
 
@@ -224,6 +235,7 @@ void mod_page(ModState *state, ConfigState *ConfigState) {
       NewModState NewModState = {0};
       new_mod_init(&NewModState, state, ConfigState->items[5].value);
       new_mod_page(&NewModState, ConfigState);
+      mod_init(state, VersionState);
     }
 
     // --- Delete: 删除文件 ---

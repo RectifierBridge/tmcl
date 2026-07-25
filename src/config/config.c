@@ -11,6 +11,12 @@ void reset_config(ConfigState *state);
 void change_config(ConfigState *state);
 void config_from_json(cJSON *json, ConfigState *state);
 static int detect_memory_mb(void);
+void remove_trailing_slash(char *str) {
+  size_t len = strlen(str);
+  if (len > 0 && str[len - 1] == '/') {
+    str[len - 1] = '\0'; // 将 '/' 替换为字符串结束符
+  }
+}
 void config_init(ConfigState *state) {
   // 初始化配置项
   char *home_dir = getenv("HOME");
@@ -27,7 +33,7 @@ void config_init(ConfigState *state) {
   strcpy(state->tmcl_dir, tmcl_dir);
   strcpy(state->tmcl_config_path, tmcl_config_path);
 
-  char game_dir[1024];
+  char game_dir[2048];
   snprintf(game_dir, sizeof(game_dir), "%s/.minecraft", home_dir);
   char *keys[] = {"java_path",      "memory",          "game_dir",
                   "jvm_args",       "download_cource", "mod_source",
@@ -447,9 +453,11 @@ void change_config(ConfigState *state) {
     mvprintw(9, 2, "Tap nothing but enter to cancel");
     mvprintw(7, 2, "Enter new config: ");
 
-    char input[64];
+    char input[1024];
     getnstr(input, sizeof(input) - 1);
     if (strcmp(input, "") != 0) {
+      if (strcmp(key, "game_dir") == 0)
+        remove_trailing_slash("input");
       strcpy(state->items[idx].value, input);
       config_write(state);
     }

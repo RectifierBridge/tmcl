@@ -257,7 +257,9 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
 // ---------- 搜索之download json ----------
 // 单列出来是因为其他action也要用
 bool search_dld_json(NewModState *state) {
-  mvprintw(1, 0, "loading ......");
+  int row, col;
+  getmaxyx(stdscr, row, col);
+  mvprintw(row - 3, 0, "loading ......");
   refresh();
 
   // 下载json 文件
@@ -307,9 +309,11 @@ void action_search(NewModState *state, cJSON **mod_search_result) {
 
 // ---------- 安装和详情 ----------
 void action_install(NewModState *state) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
   // ---------- modrinth ----------
   if (strcmp(state->source, "Modrinth") == 0) {
-    mvprintw(1, 0, "loading ......");
+    mvprintw(row - 3, 0, "loading ......");
     refresh();
 
     // ----- 下载json文件 -----

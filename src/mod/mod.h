@@ -2,6 +2,7 @@
 #define MOD_H
 
 #include "../config/config.h"
+#include "../version/version.h"
 
 typedef struct {
   char **files;   // mods/ directory: all .jar files
@@ -17,11 +18,10 @@ typedef struct {
   char modloader[32];  // "forge", "fabric", "neoforge", "vanilla"
 } ModState;
 
-void mod_init(ModState *state, const char *version_name,
-              const char *version_dir, const char *modloader, int isolated,
-              const char *game_dir, const char *version);
+void mod_init(ModState *state, VersionState *VersionState);
 
-void mod_page(ModState *state, ConfigState *ConfigState);
+void mod_page(ModState *state, VersionState *VersionState,
+              ConfigState *ConfigState);
 
 void mod_cleanup(ModState *state);
 
