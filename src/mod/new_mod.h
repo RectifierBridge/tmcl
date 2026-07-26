@@ -12,7 +12,7 @@ typedef struct {
   char version_name[256];
   char version_dir[1024];
   char mods_dir[1024]; // actual mods path (considers isolate)
-  char modloader[32];  // mod loader of the version
+  char modloader[32];  // ori mod loader of the ori version
   char mc_version[32]; // minecraft version
   char loader[32];     // mod loader of the mod you want to search
   char order[32];      // the order of the search result

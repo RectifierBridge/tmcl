@@ -85,7 +85,7 @@ bool mod_version_init(ModVersionState *state, NewModState *NewModState) {
     // ----- 下载json文件 -----
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-             "curl -s -m 20 -o /tmp/mod_version.json "
+             "curl -s -m 20 -o /tmp/tmcl_mod_version.json "
              "https://api.modrinth.com/v2/project/%s/version",
              NewModState->mod_id);
     if (system(cmd) != 0) {
@@ -96,7 +96,7 @@ bool mod_version_init(ModVersionState *state, NewModState *NewModState) {
       return 1;
     }
     // ----- 打开并解析json文件 -----
-    state->mod_version_root = parse_json("/tmp/mod_version.json");
+    state->mod_version_root = parse_json("/tmp/tmcl_mod_version.json");
     if (!state->mod_version_root) {
       clear();
       printw("FIELD to parse json file !!!");

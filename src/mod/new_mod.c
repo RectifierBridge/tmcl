@@ -14,8 +14,10 @@
 
 // 来自 version.h 的颜色映射
 extern int modloader_color(const char *modloader, int selected);
+void action_version(NewModState *state, cJSON **mod_search_result);
 void action_search(NewModState *state, cJSON **mod_search_result);
 void action_install(NewModState *state);
+void action_modloader(NewModState *state, cJSON **mod_search_result);
 
 // ==== 读取整个文件内容到字符串（调用者需 free 返回的指针）====
 char *read_file_content(const char *filepath) {
@@ -100,7 +102,9 @@ void rander_bottom(NewModState *state) {
 
   mvprintw(row - 1, 0, "& detail");
   mvprintw(row - 1, 11, "%s", state->mc_version);
+  attron(COLOR_PAIR(modloader_color(state->loader, 0)));
   mvprintw(row - 1, 22, "%s", state->loader);
+  attroff(COLOR_PAIR(modloader_color(state->loader, 0)));
   mvprintw(row - 1, 33, "%s", state->source);
   mvprintw(row - 1, 44, "%s", state->search);
 }
@@ -177,7 +181,7 @@ bottom:
 
 // ============ 主函数 ============
 void new_mod_page(NewModState *state, ConfigState *ConfigState) {
-  cJSON *mod_search_result = parse_json("/tmp/mod_search_result.json");
+  cJSON *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
   while (1) {
     int row, col;
     getmaxyx(stdscr, row, col);
@@ -241,8 +245,10 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
       action_install(state);
       break;
     case 1:
+      action_version(state, &mod_search_result);
       break;
     case 2:
+      action_modloader(state, &mod_search_result);
       break;
     case 3:
       break;
@@ -254,9 +260,9 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
   clear();
 }
 
-// ---------- 搜索之download json ----------
+// ---------- modrinth 搜索之download json ----------
 // 单列出来是因为其他action也要用
-bool search_dld_json(NewModState *state) {
+bool mr_search_dld_json(NewModState *state) {
   int row, col;
   getmaxyx(stdscr, row, col);
   mvprintw(row - 3, 0, "loading ......");
@@ -265,19 +271,21 @@ bool search_dld_json(NewModState *state) {
   // 下载json 文件
   if (strcmp(state->source, "Modrinth") == 0) {
     char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-             "curl -s -m 20 -o /tmp/mod_search_result.json "
-             "-G --data-urlencode 'query=%s' "
-             "--data-urlencode 'project_type=mod' "
-             "--data-urlencode 'limit=100' "
-             "--data-urlencode 'versions=%s' "
-             "--data-urlencode 'categories=%s' "
-             "https://api.modrinth.com/v2/search",
-             state->search, state->mc_version, state->loader);
+    snprintf(
+        cmd, sizeof(cmd),
+        "curl -s -m 20 -o /tmp/tmcl_mr_mod_search_result.json "
+        "-G "
+        "--data-urlencode 'query=%s' "
+        "--data-urlencode 'project_type=mod' "
+        "--data-urlencode 'limit=100' "
+        "--data-urlencode 'facets=[[\"versions:%s\"],[\"categories:%s\"]]' "
+        "https://api.modrinth.com/v2/search",
+        state->search, state->mc_version, state->modloader);
     if (system(cmd) != 0) {
       clear();
-      mvprintw(3, 2, "FIELD !!!");
-      mvprintw(4, 2, "Press any key to continue");
+      mvprintw(3, 2, "FIELD to get json !!!");
+      mvprintw(4, 2, "You may check your network");
+      mvprintw(5, 2, "Press any key to continue");
       getch();
       return 1;
     }
@@ -285,30 +293,18 @@ bool search_dld_json(NewModState *state) {
   return 0;
 }
 
-// ---------- 搜索 ----------
-void action_search(NewModState *state, cJSON **mod_search_result) {
-  int row, col;
-  getmaxyx(stdscr, row, col);
-  rander_new_mod_page(state, *mod_search_result);
-  mvprintw(row - 1, 44, "%-*s", col - 44, " ");
-  move(row - 1, 44);
-  curs_set(2);
-  echo();
-  char input[1024];
-  getnstr(input, sizeof(input) - 1);
-  curs_set(0);
-  noecho();
-  snprintf(state->search, sizeof(state->search), "%s", input);
-  if (search_dld_json(state) == 1) {
-    return;
-  }
-  *mod_search_result = parse_json("/tmp/mod_search_result.json");
-  state->selected = 0;
-  state->scroll_offset = 0;
+// ---------- curseforge 搜索之download json ----------
+// 单列出来是因为其他action也要用
+bool cf_search_dld_json(NewModState *state) {
+  // 需要补充curseforge刷新代码
+  return 0;
 }
 
 // ---------- 安装和详情 ----------
 void action_install(NewModState *state) {
+  if (state->count <= 0)
+    return;
+
   int row, col;
   getmaxyx(stdscr, row, col);
   // ---------- modrinth ----------
@@ -319,7 +315,7 @@ void action_install(NewModState *state) {
     // ----- 下载json文件 -----
     char cmd[1024];
     snprintf(cmd, sizeof(cmd),
-             "curl -s -m 20 -o /tmp/mod_get_result.json "
+             "curl -s -m 20 -o /tmp/tmcl_mod_get_result.json "
              "https://api.modrinth.com/v2/project/%s",
              state->mod_id);
     if (system(cmd) != 0) {
@@ -331,7 +327,7 @@ void action_install(NewModState *state) {
     }
 
     // ----- 打开并解析json文件 -----
-    cJSON *get_root = parse_json("/tmp/mod_get_result.json");
+    cJSON *get_root = parse_json("/tmp/tmcl_mod_get_result.json");
     if (!get_root) {
       return;
     }
@@ -375,4 +371,184 @@ void action_install(NewModState *state) {
       mod_version_page(&ModVersionState, state);
     }
   }
+
+  // ------- CurseForge -------
+  if (strcmp(state->source, "CurseForge") == 0) {
+    // 需要补充curseforge刷新代码
+  }
+}
+
+// ---------- 搜索 ----------
+void action_search(NewModState *state, cJSON **mod_search_result) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+  rander_new_mod_page(state, *mod_search_result);
+  mvprintw(row - 1, 44, "%-*s", col - 44, " ");
+  move(row - 1, 44);
+  curs_set(2);
+  echo();
+  char input[1024];
+  getnstr(input, sizeof(input) - 1);
+  curs_set(0);
+  noecho();
+  snprintf(state->search, sizeof(state->search), "%s", input);
+  // ----- modrinth -----
+  if (strcmp(state->loader, "Modrinth") == 0) {
+    if (mr_search_dld_json(state) != 0) {
+      return;
+    }
+    *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+  }
+
+  // ----- curseforge -----
+  if (strcmp(state->loader, "CurseForge") == 0) {
+    // 需要补充curseforge刷新代码
+  }
+  state->selected = 0;
+  state->scroll_offset = 0;
+}
+
+// type mc version to fliter
+void action_version(NewModState *state, cJSON **mod_search_result) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+  rander_new_mod_page(state, *mod_search_result);
+  mvprintw(row - 1, 11, "%-*s", col - 11, " ");
+  mvprintw(row - 2, 11, "%-*s", col - 11, " ");
+  mvprintw(row - 2, 11, "MC version to fliter:  Type nothing to return");
+  mvprintw(row - 1, 33, "Type space to disable flitering");
+  move(row - 1, 11);
+  curs_set(2);
+  echo();
+  char input[64] = {0};
+  getnstr(input, sizeof(input) - 1);
+  curs_set(0);
+  noecho();
+  if (input[32] || !input[0]) {
+    return;
+  }
+  if (input[0] == ' ') {
+    char input[64] = {0};
+    goto disable_flitering;
+  }
+  for (int i = 0; i < sizeof(input); i++) {
+    if (input[i + 1] == ' ' || input[i] == '\t') {
+      return;
+    }
+  }
+
+disable_flitering:
+  snprintf(state->mc_version, sizeof(state->mc_version), "%s", input);
+
+  // ----- modrinth -----
+  if (strcmp(state->loader, "Modrinth") == 0) {
+    if (mr_search_dld_json(state) != 0) {
+      return;
+    }
+    *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+  }
+
+  // ----- curseforge -----
+  if (strcmp(state->loader, "CurseForge") == 0) {
+    // 需要补充curseforge刷新代码
+  }
+
+  state->selected = 0;
+  state->scroll_offset = 0;
+}
+
+// chose modloader
+void action_modloader(NewModState *state, cJSON **mod_search_result) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+
+  int ch;
+  char *mod_loaders[] = {"fabric", "forge", "neoforge", "quilt", "disable"};
+  int mod_loaders_count = 5; // 加上disable
+  int mod_loader_selected = 0;
+  for (int i = 0; i < mod_loaders_count; i++) {
+    if (strcmp(state->loader, mod_loaders[i]) == 0) {
+      mod_loader_selected = i;
+      break;
+    }
+  }
+
+  mvprintw(row - mod_loaders_count - 1, 21, "______________");
+  for (int i = 0; i <= mod_loaders_count; i++) {
+    mvprintw(row - mod_loaders_count + i, 21, "|");
+    mvprintw(row - mod_loaders_count + i, 34, "|");
+  }
+
+  while (1) {
+    for (int i = 0; i < mod_loaders_count; i++) {
+      attron(COLOR_PAIR(
+          modloader_color(mod_loaders[i], mod_loader_selected == i ? 1 : 0)));
+      if (mod_loader_selected == i)
+        attron(A_REVERSE);
+      mvprintw(row - mod_loaders_count + i, 22, "%-12s", mod_loaders[i]);
+      attroff(COLOR_PAIR(
+          modloader_color(mod_loaders[i], mod_loader_selected == i ? 1 : 0)));
+      if (mod_loader_selected == i)
+        attroff(A_REVERSE);
+    }
+
+    ch = getch();
+    switch (ch) {
+    case 'j':
+      mod_loader_selected++;
+      break;
+    case 'k':
+      mod_loader_selected--;
+      break;
+    case '\n':
+      snprintf(state->loader, sizeof(state->loader), "%s",
+               mod_loaders[mod_loader_selected]);
+      if (strcmp(state->loader, "disable") == 0)
+        snprintf(state->loader, sizeof(state->loader), "");
+
+      // ----- modrinth -----
+      if (strcmp(state->loader, "Modrinth") == 0) {
+        if (mr_search_dld_json(state) != 0)
+          return;
+        *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+      }
+
+      // ----- curseforge -----
+      if (strcmp(state->loader, "CurseForge") == 0) {
+        // 需要补充curseforge刷新代码
+      }
+
+      state->selected = 0;
+      state->scroll_offset = 0;
+
+    case 'q':
+      return;
+    }
+
+    if (mod_loader_selected < 0)
+      mod_loader_selected = 0;
+    if (mod_loader_selected >= mod_loaders_count)
+      mod_loader_selected = mod_loaders_count - 1;
+  }
+}
+
+// 改变mod download source
+void action_source(NewModState *state, cJSON **mod_search_result) {
+  // ----- mr -> cf -----
+  if (strcmp(state->source, "Modrinth") == 0) {
+    snprintf(state->source, sizeof(state->source), "CurseForge");
+    // 需要补充curseforge刷新代码
+  }
+
+  // ----- mr -> cf -----
+  if (strcmp(state->source, "CurseForge")) {
+    snprintf(state->source, sizeof(state->source), "Modrinth");
+    if (mr_search_dld_json(state) != 0) {
+      return;
+    }
+    *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+  }
+
+  state->selected = 0;
+  state->scroll_offset = 0;
 }
