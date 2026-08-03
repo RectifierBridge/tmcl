@@ -3,6 +3,7 @@
 
 #include "../config/config.h"
 #include "mod.h"
+#include "mod_api.h"
 
 typedef struct {
   int selected;      // cursor position (0-based)
@@ -21,6 +22,10 @@ typedef struct {
   int action_count;
   char mod_id[32];
   char mod_title[128];
+  // 统一搜索结果数组（由 mod_api_parse_search 填充，调用者负责 free）
+  ModResult *search_results;
+  // 当前选中模组的详情
+  ModDetail detail;
 } NewModState;
 
 void new_mod_init(NewModState *state, ModState *ModState, char *mod_source);

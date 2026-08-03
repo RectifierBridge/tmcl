@@ -18,6 +18,7 @@ void action_version(NewModState *state, cJSON **mod_search_result);
 void action_search(NewModState *state, cJSON **mod_search_result);
 void action_install(NewModState *state);
 void action_modloader(NewModState *state, cJSON **mod_search_result);
+void action_source(NewModState *state, cJSON **mod_search_result);
 
 // ==== 读取整个文件内容到字符串（调用者需 free 返回的指针）====
 char *read_file_content(const char *filepath) {
@@ -110,7 +111,7 @@ void rander_bottom(NewModState *state) {
 }
 
 // ========== 渲染打印 ==========
-void rander_new_mod_page(NewModState *state, cJSON *root) {
+void rander_new_mod_page(NewModState *state) {
   clear();
   int row, col;
   getmaxyx(stdscr, row, col);
@@ -119,7 +120,6 @@ void rander_new_mod_page(NewModState *state, cJSON *root) {
   attron(A_BOLD);
   printw("%s", state->version_name);
   attroff(A_BOLD);
-  // modloader 带色
   printw(" (");
   int mc = modloader_color(state->modloader, 0);
   if (mc)
@@ -129,63 +129,58 @@ void rander_new_mod_page(NewModState *state, cJSON *root) {
     attroff(COLOR_PAIR(mc));
   printw(")");
 
-  // ---------- 中间 ----------
+  // ---------- 中间：统一渲染 ModResult 数组 ----------
+  ModResult *results = state->search_results;
+  if (results && state->count > 0) {
+    for (int i = 0; i < state->count && 2 * i <= row; i++) {
+      int idx = i + state->scroll_offset;
+      if (idx >= state->count)
+        break;
+      ModResult *r = &results[idx];
 
-  if (!root)
-    goto bottom;
-
-  // ----- modrinth -----
-  if (strcmp(state->source, "Modrinth") == 0) {
-    cJSON *hits = cJSON_GetObjectItem(root, "hits");
-    if (cJSON_IsArray(hits)) {
-      int count = cJSON_GetArraySize(hits);
-      state->count = count;
-
-      for (int i = 0; i < count && 2 * i <= row; i++) {
-        cJSON *item = cJSON_GetArrayItem(hits, i + state->scroll_offset);
-        cJSON *title = cJSON_GetObjectItem(item, "title");
-        cJSON *description = cJSON_GetObjectItem(item, "description");
-        if (cJSON_IsString(title)) {
-          mvprintw(2 + 2 * i, 0, "%-*s", col, " ");
-          if (i + state->scroll_offset == state->selected) {
-            attron(A_REVERSE);
-            cJSON *mod_id = cJSON_GetObjectItem(item, "project_id");
-            snprintf(state->mod_id, sizeof(state->mod_id), "%s",
-                     mod_id->valuestring);
-            snprintf(state->mod_title, sizeof(state->mod_title), "%s",
-                     title->valuestring);
-          }
-          attron(A_BOLD);
-          attron(COLOR_PAIR(modloader_color(
-              "fabric", state->selected == i + state->scroll_offset)));
-          mvprintw(2 + 2 * i, 0, "%2d %-*s", i + state->scroll_offset, col - 3,
-                   title->valuestring);
-          attroff(A_BOLD);
-          attroff(COLOR_PAIR(modloader_color(
-              "fabric", state->selected == i + state->scroll_offset)));
-          mvprintw(3 + 2 * i, 0, "   %-*s", col - 3, description->valuestring);
-          if (i + state->scroll_offset == state->selected)
-            attroff(A_REVERSE);
-        }
+      mvprintw(2 + 2 * i, 0, "%-*s", col, " ");
+      if (idx == state->selected) {
+        attron(A_REVERSE);
+        snprintf(state->mod_id, sizeof(state->mod_id), "%s", r->id);
+        snprintf(state->mod_title, sizeof(state->mod_title), "%s", r->title);
       }
+      attron(A_BOLD);
+      attron(COLOR_PAIR(modloader_color("fabric", state->selected == idx)));
+      mvprintw(2 + 2 * i, 0, "%2d %-*s", idx, col - 3, r->title);
+      attroff(A_BOLD);
+      attroff(COLOR_PAIR(modloader_color("fabric", state->selected == idx)));
+      mvprintw(3 + 2 * i, 0, "   %-*s", col - 3, r->description);
+      if (idx == state->selected)
+        attroff(A_REVERSE);
     }
   }
 
-  // ----- curseforge -----
-  if (strcmp(state->loader, "CurseForge")) {
-  }
-
-bottom:
   rander_bottom(state);
 }
 
 // ============ 主函数 ============
 void new_mod_page(NewModState *state, ConfigState *ConfigState) {
-  cJSON *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+  (void)ConfigState;
+  // 尝试加载已有缓存
+  char *cache_file;
+  int src;
+  if (strcmp(state->source, "Modrinth") == 0) {
+    cache_file = "/tmp/tmcl_mr_mod_search_result.json";
+    src = SOURCE_MODRINTH;
+  } else {
+    cache_file = "/tmp/tmcl_cf_mod_search_result.json";
+    src = SOURCE_CURSEFORGE;
+  }
+  cJSON *cached = parse_json(cache_file);
+  if (cached) {
+    state->count = mod_api_parse_search(cached, src, &state->search_results);
+    cJSON_Delete(cached);
+  }
+
   while (1) {
     int row, col;
     getmaxyx(stdscr, row, col);
-    rander_new_mod_page(state, mod_search_result);
+    rander_new_mod_page(state);
     int c = getch();
 
     // 列表导航: j/k/↓/↑
@@ -239,38 +234,47 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
       break;
     }
 
+    cJSON *dummy = NULL; // 不再使用 cJSON 直接渲染
     switch (action) {
     case 0:
-      rander_new_mod_page(state, mod_search_result);
+      rander_new_mod_page(state);
       action_install(state);
       break;
     case 1:
-      action_version(state, &mod_search_result);
+      action_version(state, &dummy);
       break;
     case 2:
-      action_modloader(state, &mod_search_result);
+      action_modloader(state, &dummy);
       break;
     case 3:
+      action_source(state, &dummy);
       break;
     case 4:
-      action_search(state, &mod_search_result);
+      action_search(state, &dummy);
       break;
     }
   }
   clear();
 }
 
-// ---------- modrinth 搜索之download json ----------
-// 单列出来是因为其他action也要用
-bool mr_search_dld_json(NewModState *state) {
+// ---------- 搜索之 download json（Modrinth + CurseForge）----------
+bool mod_search_dld_json(NewModState *state) {
   int row, col;
   getmaxyx(stdscr, row, col);
   mvprintw(row - 3, 0, "loading ......");
   refresh();
 
-  // 下载json 文件
+  char cmd[2048];
   if (strcmp(state->source, "Modrinth") == 0) {
-    char cmd[2048];
+    // 只有 mc_version 非空才加 versions facet
+    char mr_facets[512];
+    if (state->mc_version[0])
+      snprintf(mr_facets, sizeof(mr_facets), "[[\"versions:%s\"],[\"categories:%s\"]]",
+               state->mc_version, state->modloader);
+    else
+      snprintf(mr_facets, sizeof(mr_facets), "[[\"categories:%s\"]]",
+               state->modloader);
+
     snprintf(
         cmd, sizeof(cmd),
         "curl -s -m 20 -o /tmp/tmcl_mr_mod_search_result.json "
@@ -278,25 +282,44 @@ bool mr_search_dld_json(NewModState *state) {
         "--data-urlencode 'query=%s' "
         "--data-urlencode 'project_type=mod' "
         "--data-urlencode 'limit=100' "
-        "--data-urlencode 'facets=[[\"versions:%s\"],[\"categories:%s\"]]' "
+        "--data-urlencode 'facets=%s' "
         "https://api.modrinth.com/v2/search",
-        state->search, state->mc_version, state->modloader);
-    if (system(cmd) != 0) {
-      clear();
-      mvprintw(3, 2, "FIELD to get json !!!");
-      mvprintw(4, 2, "You may check your network");
-      mvprintw(5, 2, "Press any key to continue");
-      getch();
-      return 1;
-    }
-  }
-  return 0;
-}
+        state->search, mr_facets);
+  } else if (strcmp(state->source, "CurseForge") == 0) {
+    // 构建 modLoaderType 参数
+    char loader_param[32] = "";
+    int lt = curseforge_loader_id(state->loader);
+    if (lt > 0)
+      snprintf(loader_param, sizeof(loader_param), "&modLoaderType=%d", lt);
 
-// ---------- curseforge 搜索之download json ----------
-// 单列出来是因为其他action也要用
-bool cf_search_dld_json(NewModState *state) {
-  // 需要补充curseforge刷新代码
+    // 只有 mc_version 非空才加 gameVersion 过滤
+    char gameVer_param[64] = "";
+    if (state->mc_version[0])
+      snprintf(gameVer_param, sizeof(gameVer_param), "&gameVersion=%s",
+               state->mc_version);
+
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 20 -o /tmp/tmcl_cf_mod_search_result.json "
+             "-H 'x-api-key: %s' "
+             "\"https://api.curseforge.com/v1/mods/search?"
+             "gameId=432&classId=6&sortField=2&sortOrder=desc"
+             "&searchFilter=%s"
+             "%s"
+             "%s\"",
+             CURSEFORGE_API_KEY,
+             state->search[0] ? state->search : "",
+             gameVer_param,
+             loader_param);
+  }
+
+  if (system(cmd) != 0) {
+    clear();
+    mvprintw(3, 2, "FIELD to get json !!!");
+    mvprintw(4, 2, "You may check your network");
+    mvprintw(5, 2, "Press any key to continue");
+    getch();
+    return 1;
+  }
   return 0;
 }
 
@@ -307,82 +330,158 @@ void action_install(NewModState *state) {
 
   int row, col;
   getmaxyx(stdscr, row, col);
-  // ---------- modrinth ----------
-  if (strcmp(state->source, "Modrinth") == 0) {
-    mvprintw(row - 3, 0, "loading ......");
-    refresh();
+  mvprintw(row - 3, 0, "loading ......");
+  refresh();
 
-    // ----- 下载json文件 -----
-    char cmd[1024];
+  // ----- 统一下载详情 JSON -----
+  char cmd[2048];
+  char *get_tmp;
+  if (strcmp(state->source, "Modrinth") == 0) {
     snprintf(cmd, sizeof(cmd),
              "curl -s -m 20 -o /tmp/tmcl_mod_get_result.json "
              "https://api.modrinth.com/v2/project/%s",
              state->mod_id);
-    if (system(cmd) != 0) {
-      clear();
-      mvprintw(3, 2, "FIELD !!!");
-      mvprintw(4, 2, "Press any key to continue");
-      getch();
-      return;
-    }
+    get_tmp = "/tmp/tmcl_mod_get_result.json";
+  } else { // CurseForge
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 20 -o /tmp/tmcl_cf_mod_get_result.json "
+             "-H 'x-api-key: %s' "
+             "\"https://api.curseforge.com/v1/mods/%s\"",
+             CURSEFORGE_API_KEY, state->mod_id);
+    get_tmp = "/tmp/tmcl_cf_mod_get_result.json";
+  }
 
-    // ----- 打开并解析json文件 -----
-    cJSON *get_root = parse_json("/tmp/tmcl_mod_get_result.json");
-    if (!get_root) {
-      return;
-    }
-
-    // 渲染
+  if (system(cmd) != 0) {
     clear();
-    int row, col;
-    getmaxyx(stdscr, row, col);
-    cJSON *title = cJSON_GetObjectItem(get_root, "title");
-    cJSON *description = cJSON_GetObjectItem(get_root, "description");
-    cJSON *downloads = cJSON_GetObjectItem(get_root, "downloads");
-    cJSON *followers = cJSON_GetObjectItem(get_root, "followers");
-    cJSON *body = cJSON_GetObjectItem(get_root, "body");
-    cJSON *server_side = cJSON_GetObjectItem(get_root, "server_side");
-    cJSON *client_side = cJSON_GetObjectItem(get_root, "client_side");
-    cJSON *mod_loaders = cJSON_GetObjectItem(get_root, "loaders");
+    mvprintw(3, 2, "FIELD !!!");
+    mvprintw(4, 2, "Press any key to continue");
+    getch();
+    return;
+  }
 
-    move(0, 0);
-    printw("\n  >> %s <<\n\n", title->valuestring);
-    printw("dls: %-13d", downloads->valueint);
-    printw("fls: %-13d", followers->valueint);
-    printw("clt: %-13s", client_side->valuestring);
-    printw("svr: %-13s", server_side->valuestring);
-    printw("\nMod Loader:       ");
-    int arry_size = cJSON_GetArraySize(mod_loaders);
-    for (int i = 0; i < arry_size; i++) {
-      cJSON *loader_item = cJSON_GetArrayItem(mod_loaders, i);
-      int loader_color = modloader_color(loader_item->valuestring, 0);
-      attron(COLOR_PAIR(loader_color));
-      printw("%-18s", loader_item->valuestring);
-      attroff(COLOR_PAIR(loader_color));
+  // ----- 统一解析 -----
+  cJSON *get_root = parse_json(get_tmp);
+  if (!get_root)
+    return;
+
+  int src = (strcmp(state->source, "Modrinth") == 0) ? SOURCE_MODRINTH
+                                                      : SOURCE_CURSEFORGE;
+  mod_api_parse_detail(get_root, src, &state->detail);
+  cJSON_Delete(get_root);
+
+  // CurseForge: /v1/mods/{id} 不返回 description，需要单独获取
+  if (src == SOURCE_CURSEFORGE) {
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 20 -o /tmp/tmcl_cf_mod_desc.json "
+             "-H 'x-api-key: %s' "
+             "\"https://api.curseforge.com/v1/mods/%s/description\"",
+             CURSEFORGE_API_KEY, state->mod_id);
+    if (system(cmd) == 0) {
+      cJSON *desc_root = parse_json("/tmp/tmcl_cf_mod_desc.json");
+      if (desc_root) {
+        cJSON *desc_data = cJSON_GetObjectItem(desc_root, "data");
+        if (cJSON_IsString(desc_data)) {
+          size_t len = strlen(desc_data->valuestring);
+          if (len >= sizeof(state->detail.body))
+            len = sizeof(state->detail.body) - 1;
+          memcpy(state->detail.body, desc_data->valuestring, len);
+          state->detail.body[len] = '\0';
+        }
+        cJSON_Delete(desc_root);
+      }
     }
-    printw("\n\n==> DESCRIPTION:\n%s\n\n", description->valuestring);
-    printw("==> DETAIL:\n%s", body->valuestring);
-    mvprintw(row - 1, 0, "%-*s", col, " ");
-    mvprintw(row - 2, 0, "%-*s", col, " ");
-    mvprintw(row - 1, 0, "Do you want to [i]nstall this mod? [Y/n]");
-    int ch = getch();
-    if (ch == 'y' || ch == 'Y' || ch == '\n' || ch == 'i') {
-      ModVersionState ModVersionState = {0};
-      mod_version_page(&ModVersionState, state);
+
+    // 从 files 端点提取 mod loader（latestFiles[0].gameVersions 不总是包含 loader）
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 20 -o /tmp/tmcl_cf_mod_files.json "
+             "-H 'x-api-key: %s' "
+             "\"https://api.curseforge.com/v1/mods/%s/files?pageSize=10\"",
+             CURSEFORGE_API_KEY, state->mod_id);
+    if (system(cmd) == 0) {
+      cJSON *files_root = parse_json("/tmp/tmcl_cf_mod_files.json");
+      if (files_root) {
+        cJSON *files_data = cJSON_GetObjectItem(files_root, "data");
+        if (cJSON_IsArray(files_data)) {
+          int fn = cJSON_GetArraySize(files_data);
+          char seen[256] = ""; // 去重
+          int pos = 0;
+          for (int fi = 0; fi < fn; fi++) {
+            cJSON *file = cJSON_GetArrayItem(files_data, fi);
+            cJSON *gv_array = cJSON_GetObjectItem(file, "gameVersions");
+            if (!cJSON_IsArray(gv_array))
+              continue;
+            int gn = cJSON_GetArraySize(gv_array);
+            for (int gi = 0; gi < gn; gi++) {
+              cJSON *gv = cJSON_GetArrayItem(gv_array, gi);
+              if (!cJSON_IsString(gv))
+                continue;
+              const char *v = gv->valuestring;
+              const char *lc = NULL;
+              if (strcmp(v, "Forge") == 0) lc = "forge";
+              else if (strcmp(v, "Fabric") == 0) lc = "fabric";
+              else if (strcmp(v, "NeoForge") == 0) lc = "neoforge";
+              else if (strcmp(v, "Quilt") == 0) lc = "quilt";
+              if (!lc) continue;
+              // 去重
+              if (strstr(seen, lc) == NULL) {
+                if (pos > 0) pos += snprintf(seen + pos, sizeof(seen) - pos, ",");
+                pos += snprintf(seen + pos, sizeof(seen) - pos, "%s", lc);
+                if ((size_t)pos >= sizeof(seen)) break;
+              }
+            }
+          }
+          snprintf(state->detail.loaders_list, sizeof(state->detail.loaders_list), "%s", seen);
+        }
+        cJSON_Delete(files_root);
+      }
     }
   }
 
-  // ------- CurseForge -------
-  if (strcmp(state->source, "CurseForge") == 0) {
-    // 需要补充curseforge刷新代码
+  // ----- 渲染 -----
+  clear();
+  getmaxyx(stdscr, row, col);
+  ModDetail *d = &state->detail;
+
+  move(0, 0);
+  printw("\n  >> %s <<\n\n", d->title);
+  printw("dls: %-13d", d->downloads);
+  printw("fls: %-13d", d->followers);
+  printw("clt: %-13s", d->client_side);
+  printw("svr: %-13s", d->server_side);
+  printw("\nMod Loader:       ");
+
+  // 从 loaders_list 解析并着色
+  char list_copy[256];
+  snprintf(list_copy, sizeof(list_copy), "%s", d->loaders_list);
+  char *token = strtok(list_copy, ",");
+  while (token) {
+    while (*token == ' ')
+      token++;
+    int loader_color = modloader_color(token, 0);
+    attron(COLOR_PAIR(loader_color));
+    printw("%-18s", token);
+    attroff(COLOR_PAIR(loader_color));
+    token = strtok(NULL, ",");
+  }
+
+  printw("\n\n==> DESCRIPTION:\n%s\n\n", d->description);
+  printw("==> DETAIL:\n%s", d->body);
+  mvprintw(row - 1, 0, "%-*s", col, " ");
+  mvprintw(row - 2, 0, "%-*s", col, " ");
+  mvprintw(row - 1, 0, "Do you want to [i]nstall this mod? [Y/n]");
+  int ch = getch();
+  if (ch == 'y' || ch == 'Y' || ch == '\n' || ch == 'i') {
+    ModVersionState ModVersionState = {0};
+    mod_version_page(&ModVersionState, state);
   }
 }
 
 // ---------- 搜索 ----------
 void action_search(NewModState *state, cJSON **mod_search_result) {
+  (void)mod_search_result;
   int row, col;
   getmaxyx(stdscr, row, col);
-  rander_new_mod_page(state, *mod_search_result);
+  rander_new_mod_page(state);
   mvprintw(row - 1, 44, "%-*s", col - 44, " ");
   move(row - 1, 44);
   curs_set(2);
@@ -392,27 +491,40 @@ void action_search(NewModState *state, cJSON **mod_search_result) {
   curs_set(0);
   noecho();
   snprintf(state->search, sizeof(state->search), "%s", input);
-  // ----- modrinth -----
-  if (strcmp(state->loader, "Modrinth") == 0) {
-    if (mr_search_dld_json(state) != 0) {
-      return;
-    }
-    *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+
+  // 统一下载搜索 JSON
+  if (mod_search_dld_json(state) != 0)
+    return;
+
+  // 统一解析
+  char *tmp_file;
+  int src;
+  if (strcmp(state->source, "Modrinth") == 0) {
+    tmp_file = "/tmp/tmcl_mr_mod_search_result.json";
+    src = SOURCE_MODRINTH;
+  } else {
+    tmp_file = "/tmp/tmcl_cf_mod_search_result.json";
+    src = SOURCE_CURSEFORGE;
   }
 
-  // ----- curseforge -----
-  if (strcmp(state->loader, "CurseForge") == 0) {
-    // 需要补充curseforge刷新代码
-  }
+  cJSON *root = parse_json(tmp_file);
+  if (!root)
+    return;
+
+  free(state->search_results);
+  state->count = mod_api_parse_search(root, src, &state->search_results);
+  cJSON_Delete(root);
+
   state->selected = 0;
   state->scroll_offset = 0;
 }
 
 // type mc version to fliter
 void action_version(NewModState *state, cJSON **mod_search_result) {
+  (void)mod_search_result;
   int row, col;
   getmaxyx(stdscr, row, col);
-  rander_new_mod_page(state, *mod_search_result);
+  rander_new_mod_page(state);
   mvprintw(row - 1, 11, "%-*s", col - 11, " ");
   mvprintw(row - 2, 11, "%-*s", col - 11, " ");
   mvprintw(row - 2, 11, "MC version to fliter:  Type nothing to return");
@@ -428,29 +540,35 @@ void action_version(NewModState *state, cJSON **mod_search_result) {
     return;
   }
   if (input[0] == ' ') {
-    char input[64] = {0};
-    goto disable_flitering;
-  }
-  for (int i = 0; i < sizeof(input); i++) {
-    if (input[i + 1] == ' ' || input[i] == '\t') {
-      return;
+    // 空格 → 禁用 MC 版本过滤
+    snprintf(state->mc_version, sizeof(state->mc_version), "%s", "");
+  } else {
+    for (int i = 0; i < (int)sizeof(input); i++) {
+      if (input[i + 1] == ' ' || input[i] == '\t') {
+        return;
+      }
     }
+    snprintf(state->mc_version, sizeof(state->mc_version), "%s", input);
   }
 
-disable_flitering:
-  snprintf(state->mc_version, sizeof(state->mc_version), "%s", input);
-
-  // ----- modrinth -----
-  if (strcmp(state->loader, "Modrinth") == 0) {
-    if (mr_search_dld_json(state) != 0) {
-      return;
+  // 统一下载 + 解析
+  free(state->search_results);
+  state->search_results = NULL;
+  if (!mod_search_dld_json(state)) {
+    char *tmp_file;
+    int src;
+    if (strcmp(state->source, "Modrinth") == 0) {
+      tmp_file = "/tmp/tmcl_mr_mod_search_result.json";
+      src = SOURCE_MODRINTH;
+    } else {
+      tmp_file = "/tmp/tmcl_cf_mod_search_result.json";
+      src = SOURCE_CURSEFORGE;
     }
-    *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
-  }
-
-  // ----- curseforge -----
-  if (strcmp(state->loader, "CurseForge") == 0) {
-    // 需要补充curseforge刷新代码
+    cJSON *root = parse_json(tmp_file);
+    if (root) {
+      state->count = mod_api_parse_search(root, src, &state->search_results);
+      cJSON_Delete(root);
+    }
   }
 
   state->selected = 0;
@@ -459,6 +577,7 @@ disable_flitering:
 
 // chose modloader
 void action_modloader(NewModState *state, cJSON **mod_search_result) {
+  (void)mod_search_result;
   int row, col;
   getmaxyx(stdscr, row, col);
 
@@ -506,16 +625,24 @@ void action_modloader(NewModState *state, cJSON **mod_search_result) {
       if (strcmp(state->loader, "disable") == 0)
         snprintf(state->loader, sizeof(state->loader), "");
 
-      // ----- modrinth -----
-      if (strcmp(state->loader, "Modrinth") == 0) {
-        if (mr_search_dld_json(state) != 0)
-          return;
-        *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
-      }
-
-      // ----- curseforge -----
-      if (strcmp(state->loader, "CurseForge") == 0) {
-        // 需要补充curseforge刷新代码
+      // 统一下载 + 解析（基于 source，非 loader）
+      free(state->search_results);
+      state->search_results = NULL;
+      if (!mod_search_dld_json(state)) {
+        char *tmp_file;
+        int src;
+        if (strcmp(state->source, "Modrinth") == 0) {
+          tmp_file = "/tmp/tmcl_mr_mod_search_result.json";
+          src = SOURCE_MODRINTH;
+        } else {
+          tmp_file = "/tmp/tmcl_cf_mod_search_result.json";
+          src = SOURCE_CURSEFORGE;
+        }
+        cJSON *root = parse_json(tmp_file);
+        if (root) {
+          state->count = mod_api_parse_search(root, src, &state->search_results);
+          cJSON_Delete(root);
+        }
       }
 
       state->selected = 0;
@@ -534,21 +661,45 @@ void action_modloader(NewModState *state, cJSON **mod_search_result) {
 
 // 改变mod download source
 void action_source(NewModState *state, cJSON **mod_search_result) {
-  // ----- mr -> cf -----
+  (void)mod_search_result;
+  // 先清除旧结果
+  free(state->search_results);
+  state->search_results = NULL;
+  state->count = 0;
+
+  // MR → CF
   if (strcmp(state->source, "Modrinth") == 0) {
     snprintf(state->source, sizeof(state->source), "CurseForge");
-    // 需要补充curseforge刷新代码
-  }
-
-  // ----- mr -> cf -----
-  if (strcmp(state->source, "CurseForge")) {
-    snprintf(state->source, sizeof(state->source), "Modrinth");
-    if (mr_search_dld_json(state) != 0) {
-      return;
+    // 用 CurseForge 源重新搜索
+    if (state->search[0] != '\0' && mod_search_dld_json(state) == 0) {
+      cJSON *root = parse_json("/tmp/tmcl_cf_mod_search_result.json");
+      if (root) {
+        state->count = mod_api_parse_search(root, SOURCE_CURSEFORGE,
+                                            &state->search_results);
+        cJSON_Delete(root);
+      }
     }
-    *mod_search_result = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+  }
+  // CF → MR
+  else if (strcmp(state->source, "CurseForge") == 0) {
+    snprintf(state->source, sizeof(state->source), "Modrinth");
+    if (state->search[0] != '\0' && mod_search_dld_json(state) == 0) {
+      cJSON *root = parse_json("/tmp/tmcl_mr_mod_search_result.json");
+      if (root) {
+        state->count = mod_api_parse_search(root, SOURCE_MODRINTH,
+                                            &state->search_results);
+        cJSON_Delete(root);
+      }
+    }
   }
 
   state->selected = 0;
   state->scroll_offset = 0;
+}
+
+// ---- 清理 ----
+void new_mod_cleanup(NewModState *state) {
+  free(state->search_results);
+  state->search_results = NULL;
+  state->count = 0;
 }

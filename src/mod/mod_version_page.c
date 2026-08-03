@@ -13,60 +13,11 @@
 extern cJSON *parse_json(char *filepath);
 extern int modloader_color(const char *modloader, int selected);
 
-void fliter_mod_version(ModVersionState *state, NewModState *NewModState) {
-  // ---------- Modrinth ----------
-  if (strcmp(NewModState->source, "Modrinth") == 0) {
-    int array_size = cJSON_GetArraySize(state->mod_version_root);
-    state->count_all = array_size;
-    state->count_flitered = 0;
-    for (int i = 0; i < array_size; i++) {
-      cJSON *version = cJSON_GetArrayItem(state->mod_version_root, i);
-      cJSON *game_versions = cJSON_GetObjectItem(version, "game_versions");
-      cJSON *loaders = cJSON_GetObjectItem(version, "loaders");
-
-      // 过滤条件检查（同前）
-      int mc_ok = 0;
-      if (cJSON_IsArray(game_versions)) {
-        int gv_size = cJSON_GetArraySize(game_versions);
-        for (int j = 0; j < gv_size; j++) {
-          cJSON *gv = cJSON_GetArrayItem(game_versions, j);
-          if (strcmp(state->mc_version, gv->valuestring) == 0) {
-            mc_ok = 1;
-            break;
-          }
-        }
-      }
-      if (!mc_ok)
-        continue;
-
-      int loader_ok = 0;
-      if (cJSON_IsArray(loaders)) {
-        int l_size = cJSON_GetArraySize(loaders);
-        for (int j = 0; j < l_size; j++) {
-          cJSON *loader = cJSON_GetArrayItem(loaders, j);
-          if (strcmp(state->modloader, loader->valuestring) == 0) {
-            loader_ok = 1;
-            break;
-          }
-        }
-      }
-      if (!loader_ok)
-        continue;
-
-      // 通过过滤，存储指针
-      state->filtered_versions[state->count_flitered] = version;
-      state->count_flitered++;
-    }
-  }
-
-  // ---------- CurseForge ----------
-  else if (strcmp(NewModState->source, "CurseForge")) {
-  }
-}
-
+// ========== 初始化（下载 + 解析 + 过滤）==========
 bool mod_version_init(ModVersionState *state, NewModState *NewModState) {
   int row, col;
   getmaxyx(stdscr, row, col);
+  (void)col;
   state->action_count = 4;
   state->selected = 0;
   state->scroll_offset = 0;
@@ -77,48 +28,75 @@ bool mod_version_init(ModVersionState *state, NewModState *NewModState) {
            NewModState->modloader);
   snprintf(state->mc_version, sizeof(state->mc_version), "%s",
            NewModState->mc_version);
+  snprintf(state->install_as, sizeof(state->install_as), "%s", "");
 
-  // ---------- modrinth ----------
+  mvprintw(row - 2, 0, "loading ......");
+  refresh();
+
+  // ----- 下载 JSON -----
+  char cmd[2048];
+  char *tmp_file;
   if (strcmp(NewModState->source, "Modrinth") == 0) {
-    mvprintw(row - 2, 0, "loading ......");
-    refresh();
-    // ----- 下载json文件 -----
-    char cmd[1024];
     snprintf(cmd, sizeof(cmd),
              "curl -s -m 20 -o /tmp/tmcl_mod_version.json "
              "https://api.modrinth.com/v2/project/%s/version",
              NewModState->mod_id);
-    if (system(cmd) != 0) {
-      clear();
-      printw("FIELD to download !!!");
-      printw("Press any key to continue");
-      getch();
-      return 1;
-    }
-    // ----- 打开并解析json文件 -----
-    state->mod_version_root = parse_json("/tmp/tmcl_mod_version.json");
-    if (!state->mod_version_root) {
-      clear();
-      printw("FIELD to parse json file !!!");
-      printw("Press any key to continue");
-      getch();
-      return 1;
-    }
+    tmp_file = "/tmp/tmcl_mod_version.json";
+  } else { // CurseForge
+    int lt = curseforge_loader_id(NewModState->loader);
+    // 只有 mc_version 非空才加 gameVersion 过滤
+    char gameVer_param[96] = "";
+    if (NewModState->mc_version[0])
+      snprintf(gameVer_param, sizeof(gameVer_param), "gameVersion=%s",
+               NewModState->mc_version);
+    // loader 参数：前置有 gameVersion 时加 &，否则直接写（作为首个参数不加 &）
+    char loader_param[32] = "";
+    if (lt > 0)
+      snprintf(loader_param, sizeof(loader_param), "%smodLoaderType=%d",
+               gameVer_param[0] ? "&" : "", lt);
+    snprintf(cmd, sizeof(cmd),
+             "curl -s -m 20 -o /tmp/tmcl_cf_mod_version.json "
+             "-H 'x-api-key: %s' "
+             "\"https://api.curseforge.com/v1/mods/%s/files?"
+             "%s%s\"",
+             CURSEFORGE_API_KEY, NewModState->mod_id,
+             gameVer_param, loader_param);
+    tmp_file = "/tmp/tmcl_cf_mod_version.json";
+  }
 
-    cJSON *version = cJSON_GetArrayItem(state->mod_version_root, 0);
-    if (!version) {
-      clear();
-      printw("There is nothing to download !!!");
-      printw("Press any key to continue");
-      getch();
-      return 1;
-    }
-    int arry_size = cJSON_GetArraySize(state->mod_version_root);
-    state->count_all = arry_size;
-    state->filtered_versions = malloc(state->count_all * sizeof(cJSON *));
+  if (system(cmd) != 0) {
+    clear();
+    printw("FIELD to download !!!");
+    printw("Press any key to continue");
+    getch();
+    return 1;
+  }
 
-    // ---------- CurseForge ----------
-  } else if (strcmp(NewModState->source, "CurseForge") == 0) {
+  // ----- 统一解析（含过滤）-----
+  state->mod_version_root = parse_json(tmp_file);
+  if (!state->mod_version_root) {
+    clear();
+    printw("FIELD to parse json file !!!");
+    printw("Press any key to continue");
+    getch();
+    return 1;
+  }
+
+  int src = (strcmp(NewModState->source, "Modrinth") == 0)
+                ? SOURCE_MODRINTH
+                : SOURCE_CURSEFORGE;
+  state->count_all = mod_api_parse_versions(state->mod_version_root, src,
+                                            state->mc_version,
+                                            state->modloader,
+                                            &state->versions);
+  state->count_flitered = state->count_all;
+
+  if (state->count_flitered == 0) {
+    clear();
+    printw("There is nothing to download !!!");
+    printw("Press any key to continue");
+    getch();
+    return 1;
   }
   return 0;
 }
@@ -148,65 +126,47 @@ void rander_mod_version(ModVersionState *state, NewModState *NewModState) {
     attroff(COLOR_PAIR(mc));
   printw(")");
 
-  // =-=-=-=-=-=-=- 中间 -=--=-=-=-=-=-=
-  // ------------ modrinth -------------
-  if (strcmp(NewModState->source, "Modrinth") == 0) {
+  // ---------- 版本列表 ----------
+  if (state->versions && state->count_flitered > 0) {
     for (int i = 0; i < state->count_flitered && 2 * i <= row; i++) {
-      cJSON *version = state->filtered_versions[i];
-      bool selected = 0;
-      if (i + state->scroll_offset == state->selected) {
+      int idx = i + state->scroll_offset;
+      if (idx >= state->count_flitered)
+        break;
+      ModVersion *mv = &state->versions[idx];
+      bool selected = (idx == state->selected);
+      if (selected)
         attron(A_REVERSE);
-        selected = 1;
-      }
       mvprintw(2 + 2 * i, 0, "%-*s", col, " ");
       mvprintw(3 + 2 * i, 0, "%-*s", col, " ");
-      cJSON *version_number = cJSON_GetObjectItem(version, "version_number");
-      cJSON *version_type = cJSON_GetObjectItem(version, "version_type");
-      cJSON *downloads = cJSON_GetObjectItem(version, "downloads");
+
+      // 第一行: 类型+版本号+下载量
       attron(A_BOLD);
-      mvprintw(2 + 2 * i, 0, " %2d ", i + state->scroll_offset);
-      if (strcmp(version_type->valuestring, "release") == 0) {
+      mvprintw(2 + 2 * i, 0, " %2d ", idx);
+      // release_type 着色
+      if (mv->release_type >= 0 && mv->release_type <= 2) {
+        const char *type_char = "RBA";
         attron(COLOR_PAIR(modloader_color("fabric", selected)));
-        printw("R");
-        attroff(COLOR_PAIR(modloader_color("fabric", selected)));
-      } else if (strcmp(version_type->valuestring, "beta") == 0) {
-        attron(COLOR_PAIR(modloader_color("fabric", selected)));
-        printw("B");
-        attroff(COLOR_PAIR(modloader_color("fabric", selected)));
-      } else if (strcmp(version_type->valuestring, "alpha") == 0) {
-        attron(COLOR_PAIR(modloader_color("fabric", selected)));
-        printw("A");
+        printw("%c", type_char[mv->release_type]);
         attroff(COLOR_PAIR(modloader_color("fabric", selected)));
       } else {
-        printw("U"); // Unkown
+        printw("U");
       }
-      printw(" %s", version_number->valuestring);
+      printw(" %s", mv->version_number);
       attroff(A_BOLD);
-      printw("  D:%d", downloads->valueint);
+      printw("  D:%d", mv->downloads);
 
-      // 第二行
+      // 第二行: game_versions + loaders
       move(3 + 2 * i, 4);
-      cJSON *game_versions = cJSON_GetObjectItem(version, "game_versions");
-      cJSON *loaders = cJSON_GetObjectItem(version, "loaders");
-      int game_versions_count = cJSON_GetArraySize(game_versions);
-      int loaders_count = cJSON_GetArraySize(loaders);
-      for (int i = 0; i < game_versions_count; i++) {
-        printw("%s ", cJSON_GetArrayItem(game_versions, i)->valuestring);
-      }
-      for (int i = 0; i < loaders_count; i++) {
-        printw(" %s", cJSON_GetArrayItem(loaders, i)->valuestring);
-      }
+      printw("%s %s", mv->game_versions, mv->loaders);
 
-      // end
-      if (i + state->scroll_offset == state->selected)
+      if (selected)
         attroff(A_REVERSE);
     }
-    if (!state->filtered_versions) {
-      mvprintw(2, 3, "There is no vesion to install");
-      mvprintw(3, 3,
-               "You may change your fliter conditions (minecraft version and "
-               "modloader ) below.");
-    }
+  } else {
+    mvprintw(2, 3, "There is no version to install");
+    mvprintw(3, 3,
+             "You may change your filter conditions (minecraft version and "
+             "modloader) below.");
   }
 
   // ---------- bottom bar ----------
@@ -233,14 +193,13 @@ void rander_mod_version(ModVersionState *state, NewModState *NewModState) {
 }
 
 void aaction_install(ModVersionState *state) {
+  ModVersion *mv = &state->versions[state->selected];
   char cmd[2048];
-  cJSON *version = state->filtered_versions[state->selected];
-  cJSON *files = cJSON_GetObjectItem(version, "files");
-  cJSON *file0 = cJSON_GetArrayItem(files, 0);
-  cJSON *url = cJSON_GetObjectItem(file0, "url");
+  char dest[1024];
+  snprintf(dest, sizeof(dest), "%s/%s", state->mods_dir, mv->filename);
 
   snprintf(cmd, sizeof(cmd), "curl -# -L -m 60 -o \"%s\" \"%s\"",
-           state->install_as, url->valuestring);
+           dest, mv->download_url);
   endwin();
   // 执行下载
   printf("\n");
@@ -260,19 +219,16 @@ void mod_version_page(ModVersionState *state, NewModState *NewModState) {
   if (mod_version_init(state, NewModState))
     return;
   int pre_selected = -1;
-  fliter_mod_version(state, NewModState);
 
   while (1) {
     int row, col;
     getmaxyx(stdscr, row, col);
+    (void)col;
 
     if (state->selected != pre_selected && state->count_flitered > 0) {
-      cJSON *version = state->filtered_versions[state->selected];
-      cJSON *files = cJSON_GetObjectItem(version, "files");
-      cJSON *file0 = cJSON_GetArrayItem(files, 0);
-      cJSON *filename = cJSON_GetObjectItem(file0, "filename");
+      ModVersion *mv = &state->versions[state->selected];
       snprintf(state->install_as, sizeof(state->install_as), "%s/%s",
-               state->mods_dir, filename->valuestring);
+               state->mods_dir, mv->filename);
       pre_selected = state->selected;
     }
 
@@ -324,6 +280,8 @@ void mod_version_page(ModVersionState *state, NewModState *NewModState) {
       break;
     case 'q':
       clear();
+      free(state->versions);
+      state->versions = NULL;
       return;
       break;
     }
@@ -331,6 +289,8 @@ void mod_version_page(ModVersionState *state, NewModState *NewModState) {
     switch (action) {
     case 0:
       aaction_install(state);
+      free(state->versions);
+      state->versions = NULL;
       return;
       break;
     case 1:

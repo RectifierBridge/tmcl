@@ -4,6 +4,7 @@
 #include "../config/config.h"
 #include "mod.h"
 #include "new_mod.h"
+#include "mod_api.h"
 #include <cjson/cJSON.h>
 
 typedef struct {
@@ -18,8 +19,8 @@ typedef struct {
   char modloader[32];    // mod loader ot filter
   char mc_version[32];   // minecraft version to filter
   int action_count;
-  cJSON *mod_version_root;
-  cJSON **filtered_versions;
+  cJSON *mod_version_root;   // 保留用于释放 cJSON 内存
+  ModVersion *versions;      // 统一版本数组（替代 filtered_versions）
 } ModVersionState;
 
 void mod_version_page(ModVersionState *state, NewModState *NewModState);

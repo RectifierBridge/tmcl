@@ -19,17 +19,14 @@ void mod_init(ModState *state, VersionState *VersionState) {
   memset(state, 0, sizeof(*state));
   bool isolated =
       VersionState->versions[VersionState->selected_version].isolate;
-  strncpy(state->version_name,
-          VersionState->versions[VersionState->selected_version].name,
-          sizeof(state->version_name) - 1);
-  strncpy(state->version_dir, VersionState->selected_version_dir,
-          sizeof(state->version_dir) - 1);
-  strncpy(state->modloader,
-          VersionState->versions[VersionState->selected_version].modloader,
-          sizeof(state->modloader) - 1);
-  strncpy(state->version,
-          VersionState->versions[VersionState->selected_version].version,
-          sizeof(state->version) - 1);
+  snprintf(state->version_name, sizeof(state->version_name), "%s",
+           VersionState->versions[VersionState->selected_version].name);
+  snprintf(state->version_dir, sizeof(state->version_dir), "%s",
+           VersionState->selected_version_dir);
+  snprintf(state->modloader, sizeof(state->modloader), "%s",
+           VersionState->versions[VersionState->selected_version].modloader);
+  snprintf(state->version, sizeof(state->version), "%s",
+           VersionState->versions[VersionState->selected_version].version);
 
   // 确定 mods 目录
   if (isolated) {
