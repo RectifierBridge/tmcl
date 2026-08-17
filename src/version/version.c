@@ -6,6 +6,7 @@
 #include "install.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
+#include <errno.h>
 #include <ncurses.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -588,6 +589,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   strcpy(ConfigState->items[10].value, state->versions[idx].name);
   config_write(ConfigState);
 
+  erase();
+  refresh();
   endwin();
   char *mcdir = ConfigState->items[2].value;
   const char *vname = state->versions[idx].name;
@@ -919,11 +922,21 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   } else if (pid > 0) {
     printf("Minecraft 启动中 (PID: %d)...\n", pid);
     int status;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status)) {
-      printf("Minecraft 已退出，退出码: %d\n", WEXITSTATUS(status));
-    } else if (WIFSIGNALED(status)) {
-      printf("Minecraft 被信号终止: %d\n", WTERMSIG(status));
+    pid_t r;
+    // SIGWINCH 等信号会中断 waitpid (EINTR)：ncurses 安装的 SIGWINCH
+    // 处理器在 endwin 后仍生效，窗口大小改变即触发。必须循环重试，
+    // 否则会误判游戏已退出、提前重绘 UI。
+    do {
+      r = waitpid(pid, &status, 0);
+    } while (r == -1 && errno == EINTR);
+    if (r == pid) {
+      if (WIFEXITED(status)) {
+        printf("Minecraft 已退出，退出码: %d\n", WEXITSTATUS(status));
+      } else if (WIFSIGNALED(status)) {
+        printf("Minecraft 被信号终止: %d\n", WTERMSIG(status));
+      }
+    } else {
+      perror("waitpid failed");
     }
   } else {
     perror("fork failed");
@@ -1487,6 +1500,7 @@ void version_page(int ch, int *middlep, VersionState *state,
     switch (*middlep) {
     case 0: // begin
       begin_version(state, ConfigState);
+      flushinp();
       break;
     case 1: // mod
       mod(state, ConfigState);
@@ -1499,6 +1513,7 @@ void version_page(int ch, int *middlep, VersionState *state,
       break;
     case 4: // new
       new_version(state, ConfigState);
+      flushinp();
       break;
     }
     break;

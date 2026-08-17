@@ -163,6 +163,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
     if (s.selected_row == 4)
       attroff(A_REVERSE);
 
+    flushinp();
     int ch = getch();
     switch (ch) {
     case 'q':

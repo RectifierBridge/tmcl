@@ -1,5 +1,10 @@
 # TMCL 开发日志
 
+## 2026-08-17 — 修复启动游戏后改变终端大小导致 UI 提前重绘
+
+### 修复
+- ✅ begin_version waitpid EINTR 重试：ncurses 安装的 SIGWINCH 处理器（sa_flags=0，无 SA_RESTART）在 endwin 后仍生效，游戏运行期间改变终端大小会中断阻塞中的 waitpid（返回 -1/EINTR），代码未检查返回值误判游戏已退出 → 返回主循环重绘 UI 覆盖日志，游戏仍在后台运行。现按 install.c 下载模式循环重试 EINTR
+
 ## 2026-06-20 — 账户系统 + 版本配置
 
 ### 已完成
