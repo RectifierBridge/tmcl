@@ -80,8 +80,8 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
         continue; // 无法打开子目录，跳过
       }
 
-      char jsonName[256];
-      char jarName[256];
+      char jsonName[512]; // d_name(≤255) + 后缀(5) + NUL = 261
+      char jarName[512];
       snprintf(jsonName, sizeof(jsonName), "%s.json", entry->d_name);
       snprintf(jarName, sizeof(jarName), "%s.jar", entry->d_name);
 
@@ -99,7 +99,7 @@ void init_versions(VersionState *state, ConfigState *ConfigState) {
       closedir(child_dirp); // 关闭子目录句柄
 
       if (haveJar && haveJson) {
-        char json_path[350];
+        char json_path[1600]; // versionPath(1023) + jsonName(511) + NUL
         snprintf(json_path, sizeof(json_path), "%s%s", versionPath, jsonName);
 
         FILE *json_file = fopen(json_path, "r");
@@ -688,7 +688,7 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     else if (strcmp(acct->type, "littleskin") == 0 &&
              strstr(server, "/authserver") != NULL)
       server = "https://littleskin.cn/api/yggdrasil"; // 修复旧存储
-    char injector_path[600];
+    char injector_path[1200]; // home_dir(999) + 后缀(25) + NUL = 1025
     // 使用 home_dir 路径
     snprintf(injector_path, sizeof(injector_path),
              "%s/.tmcl/authlib-injector.jar", ConfigState->home_dir);
@@ -988,9 +988,6 @@ void rename_version(VersionState *state, int index, ConfigState *ConfigState) {
   if (index < 0 || index >= state->version_count || state->version_count == 0)
     return;
 
-  int row, col;
-  getmaxyx(stdscr, row, col);
-
   echo(); // 开启回显
   curs_set(1);
   clear();
@@ -1014,7 +1011,7 @@ void rename_version(VersionState *state, int index, ConfigState *ConfigState) {
     snprintf(new_dir, sizeof(new_dir), "%s/versions/%s", mcdir, new_name);
 
     // 先重命名目录，然后更新内部的 jar/json 文件名和 JSON 的 id 字段
-    char mv_cmd[1280];
+    char mv_cmd[2048]; // new_dir(599)×2 + 名字(≤63)×2 + 字面量最坏约 1356
     snprintf(mv_cmd, sizeof(mv_cmd), "mv '%s' '%s' 2>/dev/null", old_dir,
              new_dir);
     if (system(mv_cmd) == 0) {
@@ -1028,7 +1025,7 @@ void rename_version(VersionState *state, int index, ConfigState *ConfigState) {
                new_dir, new_name);
       system(mv_cmd);
       // 更新 JSON 文件中的 id 字段
-      char json_path[600];
+      char json_path[1024]; // new_dir(599) + 名字(≤63) + ".json" = 669
       snprintf(json_path, sizeof(json_path), "%s/%s.json", new_dir, new_name);
       FILE *jf = fopen(json_path, "r");
       if (jf) {
@@ -1220,7 +1217,7 @@ static void check_complete(VersionState *state, int index,
         char url[1024];
         snprintf(url, sizeof(url), "https://libraries.minecraft.net/%s",
                  lib_path + strlen(mcdir) + strlen("/libraries/"));
-        char dcmd[2100];
+        char dcmd[4096]; // url(1023) + lib_path(511)×2 + 命令字面量
         snprintf(
             dcmd, sizeof(dcmd),
             "mkdir -p \"$(dirname '%s')\" && "
@@ -1277,7 +1274,7 @@ static void check_complete(VersionState *state, int index,
                 continue;
               }
               printf("  Asset: %s\n", obj->string);
-              char dcmd[1280];
+              char dcmd[2048]; // obj_path(599)×2 + hash(40) + first2 + 字面量
               snprintf(dcmd, sizeof(dcmd),
                        "mkdir -p \"$(dirname '%s')\" && "
                        "curl -s -L --connect-timeout 15 --max-time 120 -o "
@@ -1327,6 +1324,7 @@ void version_config_page(VersionState *state, int index,
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
+    (void)row; // col 用于右上角提示，row 未使用
     mvprintw(0, 2, "Version Config: %s", v->name);
     mvprintw(0, col - 15, "tap [q] to quit");
 
@@ -1450,6 +1448,7 @@ void version_page(int ch, int *middlep, VersionState *state,
   clear();
   int row = 0, col = 0;
   getmaxyx(stdscr, row, col);
+  (void)col; // row 用于可显示行数计算，col 未使用
 
   // 处理版本选择导航
   switch (ch) {
@@ -1746,6 +1745,7 @@ char *classpath_from_json(VersionState *state, char *minecraft_dir) {
 void bottom_bar(int *middlep) {
   int row, col;
   getmaxyx(stdscr, row, col);
+  (void)col; // row 用于底部栏定位，col 未使用
 
   switch (*middlep) {
   case 0:
