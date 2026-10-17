@@ -360,7 +360,6 @@ static int ygg_login(const char *server, const char *email,
   }
 
   cJSON *at = cJSON_GetObjectItem(j, "accessToken");
-  cJSON *sp = cJSON_GetObjectItem(j, "selectedProfile");
   cJSON *ap = cJSON_GetObjectItem(j, "availableProfiles");
 
   if (!at || !cJSON_IsString(at)) {
@@ -387,8 +386,6 @@ static int ygg_login(const char *server, const char *email,
     mvprintw(3, 4, "Select a character:");
     int sel = 0;
     while (1) {
-      int row, col;
-      getmaxyx(stdscr, row, col);
       for (int i = 0; i < count; i++) {
         cJSON *p = cJSON_GetArrayItem(ap, i);
         cJSON *pn = cJSON_GetObjectItem(p, "name");
@@ -439,6 +436,7 @@ static int ms_full_login(char *name_out, size_t name_sz, char *uuid_out,
                          char *refresh_token_out, size_t rt_sz) {
   int row, col;
   getmaxyx(stdscr, row, col);
+  (void)col; // row 用于底部提示行定位，col 未使用
 
   clear();
   mvprintw(3, 4, "Microsoft Login");
@@ -626,14 +624,14 @@ static int ms_full_login(char *name_out, size_t name_sz, char *uuid_out,
   }
 
   strncpy(name_out, ms_name, name_sz - 1);
-  name_out[name_sz - 1] = ' ';
+  name_out[name_sz - 1] = '\0';
   strncpy(uuid_out, ms_uuid, uuid_sz - 1);
-  uuid_out[uuid_sz - 1] = ' ';
+  uuid_out[uuid_sz - 1] = '\0';
   strncpy(mc_token_out, mc_token, mt_sz - 1);
-  mc_token_out[mt_sz - 1] = ' ';
+  mc_token_out[mt_sz - 1] = '\0';
   if (refresh_token) {
     strncpy(refresh_token_out, refresh_token, rt_sz - 1);
-    refresh_token_out[rt_sz - 1] = ' ';
+    refresh_token_out[rt_sz - 1] = '\0';
     free(refresh_token);
   }
   free(access_token);
@@ -697,7 +695,7 @@ static int ms_refresh(const char *refresh_token, char *mc_token_out,
     return 0;
 
   strncpy(mc_token_out, mc_token, mc_token_sz - 1);
-  mc_token_out[mc_token_sz - 1] = ' ';
+  mc_token_out[mc_token_sz - 1] = '\0';
   free(mc_token);
   return 1;
 }
@@ -874,7 +872,7 @@ void account_refresh_token(AccountInfo *a) {
     char new_token[512] = {0};
     if (ms_refresh(a->refresh_token, new_token, sizeof(new_token))) {
       strncpy(a->access_token, new_token, sizeof(a->access_token) - 1);
-      a->access_token[sizeof(a->access_token) - 1] = ' ';
+      a->access_token[sizeof(a->access_token) - 1] = '\0';
       account_write(g_account_state);
     }
   } else {
@@ -968,7 +966,7 @@ static void new_account_popup(AccountState *state) {
     strncpy(a->type, "microsoft", sizeof(a->type) - 1);
     strncpy(a->access_token, ms_mc_token, sizeof(a->access_token) - 1);
     strncpy(a->refresh_token, ms_refresh, sizeof(a->refresh_token) - 1);
-    a->auth_server[0] = ' ';
+    a->auth_server[0] = '\0';
     a->selected = 0;
     if (state->account_count == 1) {
       a->selected = 1;
@@ -1186,8 +1184,6 @@ static void delete_account_popup(AccountState *state, int index) {
     return;
 
   clear();
-  int row, col;
-  getmaxyx(stdscr, row, col);
   mvprintw(3, 4, "Delete account:");
   mvprintw(5, 4, "  %s (%s)", state->accounts[index].username,
            state->accounts[index].type);
