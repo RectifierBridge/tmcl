@@ -141,6 +141,7 @@ int main() {
 void title_bar(int bigp) {
   int row, col;
   getmaxyx(stdscr, row, col);
+  (void)row; // col 用于右上角退出提示，row 未使用
 
   switch (bigp) {
   case 0:

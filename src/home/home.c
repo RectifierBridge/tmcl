@@ -112,6 +112,7 @@ void home_page(int ch, int *middlep, HomeState *state,
 
   int cur_row, cur_col;
   getyx(stdscr, cur_row, cur_col);
+  (void)cur_col; // 续行位置用 col（屏幕宽度），光标列未使用
   mvprintw(cur_row, col - 27, "contact:");
   mvprintw(cur_row + 1, col - 27, "aleph0: fossrina@163.com");
 
