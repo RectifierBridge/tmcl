@@ -180,6 +180,7 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
   while (1) {
     int row, col;
     getmaxyx(stdscr, row, col);
+    (void)col; // row 用于滚动窗口计算，col 未使用
     rander_new_mod_page(state);
     int c = getch();
 
@@ -261,6 +262,7 @@ void new_mod_page(NewModState *state, ConfigState *ConfigState) {
 bool mod_search_dld_json(NewModState *state) {
   int row, col;
   getmaxyx(stdscr, row, col);
+  (void)col; // row 用于 loading 提示定位，col 未使用
   mvprintw(row - 3, 0, "loading ......");
   refresh();
 
@@ -582,6 +584,7 @@ void action_modloader(NewModState *state, cJSON **mod_search_result) {
   (void)mod_search_result;
   int row, col;
   getmaxyx(stdscr, row, col);
+  (void)col; // row 用于弹窗定位，col 未使用
 
   int ch;
   char *mod_loaders[] = {"fabric", "forge", "neoforge", "quilt", "disable"};
@@ -625,7 +628,7 @@ void action_modloader(NewModState *state, cJSON **mod_search_result) {
       snprintf(state->loader, sizeof(state->loader), "%s",
                mod_loaders[mod_loader_selected]);
       if (strcmp(state->loader, "disable") == 0)
-        snprintf(state->loader, sizeof(state->loader), "");
+        state->loader[0] = '\0'; // 清空过滤词（-Wformat-zero-length）
 
       // 统一下载 + 解析（基于 source，非 loader）
       free(state->search_results);
