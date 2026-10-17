@@ -84,7 +84,6 @@ void config_init(ConfigState *state) {
     } else {
       // 从 cJSON 对象创建配置结构体
       // 从 JSON 提取值
-      cJSON *item;
       for (int i = 0; i < state->item_count; i++) {
         cJSON *item = cJSON_GetObjectItem(root, keys[i]);
         if (item == NULL) {
@@ -565,8 +564,6 @@ static void change_java_path(ConfigState *state) {
 
 void change_config(ConfigState *state) {
 
-  int row, col;
-  getmaxyx(stdscr, row, col);
   int idx = state->selected_item;
 
   const char *key = state->items[idx].key;
