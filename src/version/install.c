@@ -77,10 +77,9 @@ static int is_legacy_forge(const char *mc_version) {
 // ======================== Mod Loader 选择器 ========================
 static int pick_modloader(int cur) {
   const char *opts[] = {"vanilla", "fabric", "forge", "neoforge"};
-  int sel = cur, row, col;
+  int sel = cur;
   while (1) {
     clear();
-    getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select mod loader:");
     for (int i = 0; i < 4; i++) {
       if (i == sel)
@@ -91,9 +90,9 @@ static int pick_modloader(int cur) {
     }
     mvprintw(10, 4, "j/k: move  Enter: confirm  q: cancel");
     int c = getch();
-    if (c == 'j' || c == KEY_DOWN && sel < 3)
+    if (c == 'j' || (c == KEY_DOWN && sel < 3))
       sel++;
-    if (c == 'k' || c == KEY_UP && sel > 0)
+    if (c == 'k' || (c == KEY_UP && sel > 0))
       sel--;
     if (c == '\n')
       break;
@@ -130,6 +129,7 @@ void install_page(VersionState *vstate, ConfigState *cstate) {
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
+    (void)row; // col 用于右上角提示，row 未使用
 
     // 顶部
     mvprintw(1, 2, "tap [q] to quit");
@@ -352,10 +352,8 @@ static void cleanup_install(InstallState *s) {
 static int pick_type(int cur) {
   const char *opts[] = {"release", "snapshot", "old_beta", "old_alpha"};
   int sel = cur;
-  int row, col;
   while (1) {
     clear();
-    getmaxyx(stdscr, row, col);
     mvprintw(2, 4, "Select version type:");
     for (int i = 0; i < 4; i++) {
       if (i == sel)
@@ -366,9 +364,9 @@ static int pick_type(int cur) {
     }
     mvprintw(10, 4, "j/k: move  Enter: confirm  q: cancel");
     int c = getch();
-    if (c == 'j' || c == KEY_DOWN && sel < 3)
+    if (c == 'j' || (c == KEY_DOWN && sel < 3))
       sel++;
-    if (c == 'k' || c == KEY_UP && sel > 0)
+    if (c == 'k' || (c == KEY_UP && sel > 0))
       sel--;
     if (c == '\n')
       break;
@@ -468,6 +466,7 @@ static int pick_version(InstallState *s) {
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
+    (void)col; // row 用于可显示行数计算，col 未使用
     mvprintw(2, 4, "Select version (%d available):", s->versions_count);
     int max_disp = row - 6;
     if (sel < scroll)
@@ -491,9 +490,9 @@ static int pick_version(InstallState *s) {
     mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
 
     int c = getch();
-    if (c == 'j' || c == KEY_DOWN && sel < s->versions_count - 1)
+    if (c == 'j' || (c == KEY_DOWN && sel < s->versions_count - 1))
       sel++;
-    if (c == 'k' || c == KEY_UP && sel > 0)
+    if (c == 'k' || (c == KEY_UP && sel > 0))
       sel--;
     if (c == '\n')
       break;
@@ -513,8 +512,6 @@ static void input_name(char *buf, size_t size) {
   echo();
   curs_set(1);
   clear();
-  int row, col;
-  getmaxyx(stdscr, row, col);
   mvprintw(3, 4, "Enter version name:");
   mvprintw(5, 4, "(letters, digits, '-', '_', '.' only)");
   mvprintw(7, 4, "Name: ");
@@ -547,7 +544,7 @@ static void input_name(char *buf, size_t size) {
 
 typedef struct {
   char url[1024];
-  char dest[512];
+  char dest[1024]; // version_dir(511) + "/" + ".jar" + NUL = 517 需要 >512
   char label[300];
   int result;
 } DlTask;
@@ -913,6 +910,7 @@ static char *pick_fabric_loader(char **versions, int count) {
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
+    (void)col; // row 用于可显示行数计算，col 未使用
     mvprintw(2, 4, "Select Fabric Loader version (%d available):", count);
     int max_disp = row - 6;
     if (sel < scroll)
@@ -936,9 +934,9 @@ static char *pick_fabric_loader(char **versions, int count) {
     mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
 
     int c = getch();
-    if (c == 'j' || c == KEY_DOWN && sel < count - 1)
+    if (c == 'j' || (c == KEY_DOWN && sel < count - 1))
       sel++;
-    if (c == 'k' || c == KEY_UP && sel > 0)
+    if (c == 'k' || (c == KEY_UP && sel > 0))
       sel--;
     if (c == '\n')
       break;
@@ -980,7 +978,7 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
   int cap = 0;
   char **result = NULL;
   const char *p = xml_data;
-  char prefix[64];
+  char prefix[128]; // base_prefix(95) + "0-alpha."(8) 最坏 104，留余量
   char suffix_filter[32] = {
       0};                // 快照版精确匹配后缀（如 "+pre-3", "+snapshot-11"）
   int filter_stable = 0; // release 模式下过滤 alpha/snapshot NeoForge 版本
@@ -1018,7 +1016,7 @@ static char **parse_maven_xml(const char *xml_data, const char *mc_version,
       // 快照/预发布版：使用 alpha 专用前缀，精确匹配 MC 版本号
       // MC "26.1-pre-3" → NeoForge 前缀 "26.1.0.0-alpha." + 后缀过滤 "+pre-3"
       // MC "26.1-snapshot-11" → 前缀 "26.1.0.0-alpha." + 后缀 "+snapshot-11"
-      char base_prefix[64];
+      char base_prefix[96]; // base(≤63) + ".0."(3) 最坏 67
       if (total_dots == 1)
         snprintf(base_prefix, sizeof(base_prefix), "%s.0.", base);
       else
@@ -1158,6 +1156,7 @@ static char *pick_forge_version(char **versions, int count,
   while (1) {
     clear();
     getmaxyx(stdscr, row, col);
+    (void)col; // row 用于可显示行数计算，col 未使用
     mvprintw(2, 4, "Select %s version (%d available):", label, count);
     int max_disp = row - 6;
     if (sel < scroll)
@@ -1181,9 +1180,9 @@ static char *pick_forge_version(char **versions, int count,
     mvprintw(row - 1, 4, "j/k: move  Enter: confirm  q: cancel");
 
     int c = getch();
-    if (c == 'j' || c == KEY_DOWN && sel < count - 1)
+    if (c == 'j' || (c == KEY_DOWN && sel < count - 1))
       sel++;
-    if (c == 'k' || c == KEY_UP && sel > 0)
+    if (c == 'k' || (c == KEY_UP && sel > 0))
       sel--;
     if (c == '\n')
       break;
@@ -1295,7 +1294,7 @@ static char *resolve_data_value(const char *raw, const char *mcdir,
               snprintf(tmp_path, sizeof(tmp_path), "/tmp/tmcl_forge_data_%s",
                        inner);
               // 始终重新提取，避免残留旧版本文件导致校验和不匹配
-              char ext_cmd[1600];
+              char ext_cmd[4096]; // tmp_path×2 + inner×2 + 命令字面量
               snprintf(ext_cmd, sizeof(ext_cmd),
                        "mkdir -p \"$(dirname '%s')\" && "
                        "unzip -p '%s' '%s' > '%s' 2>/dev/null",
@@ -2071,9 +2070,10 @@ static void do_install(ConfigState *cstate, const char *version_id,
       cur++;
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
-        char lbl[300];
+        char lbl[350]; // 前缀(≤26) + label(299) 最坏 326
         snprintf(lbl, sizeof(lbl), "[%d/%d] %s", cur, lib_match, t->label);
-        snprintf(t->label, sizeof(t->label), "%s", lbl);
+        snprintf(t->label, sizeof(t->label), "%.*s",
+                 (int)sizeof(t->label) - 1, lbl); // lbl 可长于 label，按 label 容量截断
         tcount++;
       }
     }
@@ -2489,9 +2489,10 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
       }
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
-        char lbl[300];
+        char lbl[350]; // 前缀(≤26) + label(299) 最坏 326
         snprintf(lbl, sizeof(lbl), "[forge] %s", t->label);
-        snprintf(t->label, sizeof(t->label), "%s", lbl);
+        snprintf(t->label, sizeof(t->label), "%.*s",
+                 (int)sizeof(t->label) - 1, lbl); // lbl 可长于 label，按 label 容量截断
         tcount++;
       }
     }
@@ -2573,7 +2574,7 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
   // ---- Phase 3c: 提取原生库 (.so/.dll/.dylib) 到 versions/<name>/natives/
   // ----
   {
-    char ndir[512];
+    char ndir[1024]; // version_dir(511) + "/natives"(8) + NUL = 520
     snprintf(ndir, sizeof(ndir), "%s/natives", version_dir);
     mkdir(ndir, 0755);
     int extracted = 0;
@@ -2581,7 +2582,7 @@ void do_legacy_forge_install(ConfigState *cstate, const char *mc_version,
       if (tasks[i].result != 0)
         continue;
       if (strstr(tasks[i].dest, "natives-") != NULL) {
-        char cmd[2048];
+        char cmd[4096]; // dest(1023) + ndir(1023) + 命令字面量
         snprintf(
             cmd, sizeof(cmd),
             "unzip -q -j -o '%s' '*.so' '*.dll' '*.dylib' -d '%s' 2>/dev/null",
@@ -3090,9 +3091,10 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
       cur++;
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
-        char lbl[300];
+        char lbl[350]; // 前缀(≤26) + label(299) 最坏 326
         snprintf(lbl, sizeof(lbl), "[%d/%d] %s", cur, vlib_count, t->label);
-        snprintf(t->label, sizeof(t->label), "%s", lbl);
+        snprintf(t->label, sizeof(t->label), "%.*s",
+                 (int)sizeof(t->label) - 1, lbl); // lbl 可长于 label，按 label 容量截断
         tcount++;
       }
     }
@@ -3130,9 +3132,10 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
       }
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
-        char lbl[300];
+        char lbl[350]; // 前缀(≤26) + label(299) 最坏 326
         snprintf(lbl, sizeof(lbl), "[%s] %s", fcfg->artifact_id, t->label);
-        snprintf(t->label, sizeof(t->label), "%s", lbl);
+        snprintf(t->label, sizeof(t->label), "%.*s",
+                 (int)sizeof(t->label) - 1, lbl); // lbl 可长于 label，按 label 容量截断
         tcount++;
       }
     }
@@ -3152,9 +3155,10 @@ void do_forge_install(ConfigState *cstate, const char *mc_version,
       }
       DlTask *t = &tasks[tcount];
       if (build_lib_task(t, lib, mcdir)) {
-        char lbl[300];
+        char lbl[350]; // 前缀(≤26) + label(299) 最坏 326
         snprintf(lbl, sizeof(lbl), "[%s] %s", fcfg->artifact_id, t->label);
-        snprintf(t->label, sizeof(t->label), "%s", lbl);
+        snprintf(t->label, sizeof(t->label), "%.*s",
+                 (int)sizeof(t->label) - 1, lbl); // lbl 可长于 label，按 label 容量截断
         tcount++;
       }
     }
