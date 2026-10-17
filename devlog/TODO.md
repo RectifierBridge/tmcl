@@ -1,5 +1,17 @@
 # TODO — 开发待办
 
+## 警告清零（-Wall 0 warning 目标）
+
+现状：2026-08-17 全量重建统计 84 条警告。分布：
+- install.c ~35 条（format-truncation 缓冲不足、`||` 中 `&&` 无括号、unused row/col）
+- version.c ~14 条、account.c ~13 条（truncation、空字符字面量、unused）
+- mod.c 9 条（路径拼接 truncation）、config.c / mod_version_page.c / new_mod.c 各 3-4 条
+- main.c / home.c 各 1 条（unused）
+
+- [ ] install.c 集中清理（truncation 缓冲区审计 + parentheses + unused）
+- [ ] 其余模块逐文件清零
+- [ ] `make clean && make` 0 warning 验证
+
 ## V5 — java_path 选择器
 
 现状：启动时 javaMajor 检测优先于全局 java_path，导致全局设置几乎无用。改为选择器 UI，java_path 默认值 `auto`。

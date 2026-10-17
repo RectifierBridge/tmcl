@@ -11,6 +11,11 @@
 ### 测试
 - ✅ tmux 冒烟测试：三栏渲染、光标定位当前值、choose/auto、重复路径拒绝（含 /usr/bin/java 软链接场景）、非法路径提示、delete 权限限制、JSON 持久化与还原
 
+## 2026-08-17 — 修复 new_mod.c format-truncation 警告
+
+### 清理
+- ✅ NewModState.mod_id / mc_version、ModVersionState.mc_version 由 32 扩为 64，与上游 ModResult.id[64]、输入缓冲 input[64] 对齐，消除 2 处 format-truncation 警告；gameVer_param 64→96 消除级联警告。过滤词 UI 上限仍为 32 字符（行为不变）
+
 ## 2026-08-17 — 修复启动游戏后改变终端大小导致 UI 提前重绘
 
 ### 修复

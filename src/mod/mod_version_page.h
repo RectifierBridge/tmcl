@@ -17,7 +17,7 @@ typedef struct {
   char mods_dir[1024];   // actual mods path (considers isolate)
   char install_as[1024]; // save as
   char modloader[32];    // mod loader ot filter
-  char mc_version[32];   // minecraft version to filter
+  char mc_version[64];   // minecraft version to filter（与 NewModState.mc_version 对齐）
   int action_count;
   cJSON *mod_version_root;   // 保留用于释放 cJSON 内存
   ModVersion *versions;      // 统一版本数组（替代 filtered_versions）

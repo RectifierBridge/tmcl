@@ -293,7 +293,8 @@ bool mod_search_dld_json(NewModState *state) {
       snprintf(loader_param, sizeof(loader_param), "&modLoaderType=%d", lt);
 
     // 只有 mc_version 非空才加 gameVersion 过滤
-    char gameVer_param[64] = "";
+    // 13 字节前缀 + 最多 63 字节版本号 → 96 与 mod_version_page.c 一致
+    char gameVer_param[96] = "";
     if (state->mc_version[0])
       snprintf(gameVer_param, sizeof(gameVer_param), "&gameVersion=%s",
                state->mc_version);
@@ -536,6 +537,7 @@ void action_version(NewModState *state, cJSON **mod_search_result) {
   getnstr(input, sizeof(input) - 1);
   curs_set(0);
   noecho();
+  // 过滤词上限保持 32 字符（MC 版本号远短于此），buffer 已扩为 64 仅为对齐上游
   if (input[32] || !input[0]) {
     return;
   }

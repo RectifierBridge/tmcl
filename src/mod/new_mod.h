@@ -14,13 +14,13 @@ typedef struct {
   char version_dir[1024];
   char mods_dir[1024]; // actual mods path (considers isolate)
   char modloader[32];  // ori mod loader of the ori version
-  char mc_version[32]; // minecraft version
+  char mc_version[64]; // minecraft version（与 input[64] 对齐，避免截断警告）
   char loader[32];     // mod loader of the mod you want to search
   char order[32];      // the order of the search result
   char search[1024];   // the key word you search
   char source[32];
   int action_count;
-  char mod_id[32];
+  char mod_id[64]; // 与 ModResult.id[64] 对齐，避免截断警告
   char mod_title[128];
   // 统一搜索结果数组（由 mod_api_parse_search 填充，调用者负责 free）
   ModResult *search_results;
