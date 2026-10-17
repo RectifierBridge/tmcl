@@ -21,20 +21,22 @@ void mod_init(ModState *state, VersionState *VersionState) {
       VersionState->versions[VersionState->selected_version].isolate;
   snprintf(state->version_name, sizeof(state->version_name), "%s",
            VersionState->versions[VersionState->selected_version].name);
-  snprintf(state->version_dir, sizeof(state->version_dir), "%s",
+  // selected_version_dir 声明 2048，实际内容 <300，按 version_dir 容量截断
+  snprintf(state->version_dir, sizeof(state->version_dir), "%.*s",
+           (int)sizeof(state->version_dir) - 1,
            VersionState->selected_version_dir);
   snprintf(state->modloader, sizeof(state->modloader), "%s",
            VersionState->versions[VersionState->selected_version].modloader);
   snprintf(state->version, sizeof(state->version), "%s",
            VersionState->versions[VersionState->selected_version].version);
 
-  // 确定 mods 目录
+  // 确定 mods 目录（path + "/mods" 按 mods_dir 容量截断，实际内容远小于容量）
   if (isolated) {
-    snprintf(state->mods_dir, sizeof(state->mods_dir), "%s/mods",
-             state->version_dir);
+    snprintf(state->mods_dir, sizeof(state->mods_dir), "%.*s/mods",
+             (int)sizeof(state->mods_dir) - 6, state->version_dir);
   } else {
-    snprintf(state->mods_dir, sizeof(state->mods_dir), "%s/mods",
-             VersionState->game_dir);
+    snprintf(state->mods_dir, sizeof(state->mods_dir), "%.*s/mods",
+             (int)sizeof(state->mods_dir) - 6, VersionState->game_dir);
   }
 
   // 创建目录（如果不存在）
@@ -209,7 +211,7 @@ void mod_page(ModState *state, VersionState *VersionState,
     // --- Able: 切换启用/禁用 (文件重命名) ---
     if (action == 0 && state->count > 0) {
       int idx = state->selected;
-      char oldpath[1024], newpath[1024];
+      char oldpath[1040], newpath[1040]; // mods_dir(1023) + "/" + ".disabled"(9) + NUL = 1034
       if (state->disabled[idx]) {
         // 启用: foo.jar.disabled → foo.jar
         snprintf(oldpath, sizeof(oldpath), "%s/%s.disabled", state->mods_dir,
@@ -238,7 +240,7 @@ void mod_page(ModState *state, VersionState *VersionState,
     // --- Delete: 删除文件 ---
     if (action == 2 && state->count > 0) {
       int idx = state->selected;
-      char filepath[1024];
+      char filepath[1040]; // mods_dir(1023) + "/" + ".disabled"(9) + NUL = 1034
       // 尝试删除 .jar 或 .jar.disabled
       snprintf(filepath, sizeof(filepath), "%s/%s", state->mods_dir,
                state->files[idx]);
