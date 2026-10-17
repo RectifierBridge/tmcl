@@ -1,5 +1,16 @@
 # TMCL 开发日志
 
+## 2026-08-17 — java_path 三栏选择器
+
+### 新增
+- ✅ java_path 配置改为三栏选择器：auto（启动时自动选择）/ 自动检测（扫描 /usr/lib/jvm + PATH，realpath 去重）/ 用户添加，默认值 `auto`
+- ✅ 操作栏 [c]hoose / [n]ew / [d]elete：new/delete 仅作用于用户添加的路径，new 校验存在 + 可执行 + realpath 不重复，delete 需 y/N 确认
+- ✅ 用户路径持久化到 tmcl.json 隐藏键 `java_paths`（JSON 数组）
+- ✅ 启动优先级调整：版本级覆盖 > 全局 java_path（非 auto）> javaMajor 检测 > /usr/bin/java 兜底（此前全局设置被 javaMajor 检测遮蔽，几乎无用）
+
+### 测试
+- ✅ tmux 冒烟测试：三栏渲染、光标定位当前值、choose/auto、重复路径拒绝（含 /usr/bin/java 软链接场景）、非法路径提示、delete 权限限制、JSON 持久化与还原
+
 ## 2026-08-17 — 修复启动游戏后改变终端大小导致 UI 提前重绘
 
 ### 修复

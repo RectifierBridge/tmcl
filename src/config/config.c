@@ -1,11 +1,13 @@
 #include "config.h"
 #include <cjson/cJSON.h>
 #include <dirent.h>
+#include <limits.h>
 #include <ncurses.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 void reset_config(ConfigState *state);
 void change_config(ConfigState *state);
@@ -23,6 +25,7 @@ void config_init(ConfigState *state) {
   strcpy(state->home_dir, home_dir);
   state->item_count = 11;
   state->items = malloc(state->item_count * sizeof(ConfigItem));
+  state->user_java_path_count = 0; // 用户添加的 java 路径数量
 
   // 打开tmcl目录
   char tmcl_dir[1024];
@@ -39,7 +42,7 @@ void config_init(ConfigState *state) {
                   "jvm_args",       "download_cource", "mod_source",
                   "lib_threads",    "ast_threads",     "isolate",
                   "pinned_version", "last_play"};
-  char *default_values[] = {"/usr/bin/java", "auto",       game_dir, "",
+  char *default_values[] = {"auto",          "auto",       game_dir, "",
                             "Official",      "CurseForge", "16",     "96",
                             "yes",           "",           ""};
 
@@ -90,6 +93,20 @@ void config_init(ConfigState *state) {
         } else {
           strcpy(state->items[i].value, item->valuestring);
         }
+      }
+      // 读取用户添加的 java 路径（隐藏配置项 java_paths，JSON 数组）
+      cJSON *paths = cJSON_GetObjectItem(root, "java_paths");
+      if (cJSON_IsArray(paths)) {
+        cJSON *p;
+        int n = 0;
+        cJSON_ArrayForEach(p, paths) {
+          if (n >= MAX_JAVA_PATHS)
+            break;
+          if (cJSON_IsString(p) && p->valuestring && p->valuestring[0])
+            snprintf(state->user_java_paths[n++], JAVA_PATH_LEN, "%s",
+                     p->valuestring);
+        }
+        state->user_java_path_count = n;
       }
     }
     cJSON_Delete(root);
@@ -284,6 +301,268 @@ int config_get_memory_mb(ConfigState *state) {
   return mb > 0 ? mb : 2048;
 }
 
+// 向列表追加一个 java 路径（realpath 解析软链接去重），成功返回 1
+static int java_list_add(char list[][JAVA_PATH_LEN], int *count,
+                         const char *path) {
+  if (*count >= MAX_JAVA_PATHS)
+    return 0;
+  if (access(path, X_OK) != 0)
+    return 0;
+  // realpath 解析软链接（/usr/bin/java → 实际 jvm 路径），用于去重
+  char resolved[PATH_MAX];
+  if (realpath(path, resolved) == NULL)
+    return 0;
+  for (int i = 0; i < *count; i++) {
+    char old[PATH_MAX];
+    if (realpath(list[i], old) != NULL && strcmp(old, resolved) == 0)
+      return 0; // 已存在
+  }
+  snprintf(list[*count], JAVA_PATH_LEN, "%s", path);
+  (*count)++;
+  return 1;
+}
+
+// 自动检测系统中的 Java 路径（/usr/lib/jvm 目录扫描 + PATH），返回数量
+static int detect_java_paths(char list[][JAVA_PATH_LEN]) {
+  int count = 0;
+
+  // 1. 扫描 /usr/lib/jvm/*/bin/java（旧版 JRE 布局用 jre/bin/java）
+  DIR *dir = opendir("/usr/lib/jvm");
+  if (dir) {
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+      if (ent->d_name[0] == '.')
+        continue;
+      char cand[JAVA_PATH_LEN];
+      snprintf(cand, sizeof(cand), "/usr/lib/jvm/%s/bin/java", ent->d_name);
+      if (access(cand, X_OK) != 0)
+        snprintf(cand, sizeof(cand), "/usr/lib/jvm/%s/jre/bin/java",
+                 ent->d_name);
+      java_list_add(list, &count, cand);
+    }
+    closedir(dir);
+  }
+
+  // 2. 扫描 PATH 各目录下的 java
+  const char *path_env = getenv("PATH");
+  if (path_env) {
+    char *dup = strdup(path_env);
+    char *saveptr;
+    char *tok = strtok_r(dup, ":", &saveptr);
+    while (tok) {
+      char cand[JAVA_PATH_LEN];
+      snprintf(cand, sizeof(cand), "%s/java", tok);
+      java_list_add(list, &count, cand);
+      tok = strtok_r(NULL, ":", &saveptr);
+    }
+    free(dup);
+  }
+
+  return count;
+}
+
+// 第 i 个可选项在列表序列中的位置（节标题各占 1 行）
+static int java_seq_pos(int i, int det_count) {
+  int pos = i;
+  if (i >= 1)
+    pos += 1; // "--- detected ---"
+  if (i >= 1 + det_count)
+    pos += 1; // "--- user added ---"
+  return pos;
+}
+
+// ---- java_path 三栏选择器：auto / 自动检测 / 用户添加 ----
+static void change_java_path(ConfigState *state) {
+  int row, col;
+  getmaxyx(stdscr, row, col);
+
+  // 扫描系统 java 路径
+  char detected[MAX_JAVA_PATHS][JAVA_PATH_LEN];
+  int det_count = detect_java_paths(detected);
+  int user_count = state->user_java_path_count;
+  int total = 1 + det_count + user_count;
+
+  // 初始光标定位到当前配置值所在行
+  int sel = 0;
+  const char *cur = state->items[0].value;
+  if (strcmp(cur, "auto") != 0) {
+    int found = 0;
+    for (int i = 0; i < det_count && !found; i++)
+      if (strcmp(detected[i], cur) == 0) {
+        sel = 1 + i;
+        found = 1;
+      }
+    for (int i = 0; i < user_count && !found; i++)
+      if (strcmp(state->user_java_paths[i], cur) == 0) {
+        sel = 1 + det_count + i;
+        found = 1;
+      }
+  }
+  int scroll_offset = 0;
+  char msg[64] = ""; // 临时操作提示
+
+  int max_display = row - 1 - 6; // 列表窗口行数（底部留一行操作栏）
+  if (max_display < 1)
+    max_display = 1;
+
+  while (1) {
+    // 保证光标在窗口内
+    if (java_seq_pos(sel, det_count) < java_seq_pos(scroll_offset, det_count)) {
+      scroll_offset = sel;
+    } else {
+      while (java_seq_pos(sel, det_count) -
+                 java_seq_pos(scroll_offset, det_count) >=
+             max_display)
+        scroll_offset++;
+    }
+
+    clear();
+    mvprintw(2, 2, "Select java_path");
+    mvprintw(3, 2, "Current: %s", state->items[0].value);
+
+    int so_pos = java_seq_pos(scroll_offset, det_count);
+    int base_y = 6;
+
+    // 节标题（随列表滚动）
+    int det_head = 1;
+    int user_head = 2 + det_count;
+    if (det_head >= so_pos)
+      mvprintw(base_y + (det_head - so_pos), 2, "--- detected%s ---",
+               det_count ? "" : " (empty)");
+    if (user_head >= so_pos)
+      mvprintw(base_y + (user_head - so_pos), 2, "--- user added%s ---",
+               user_count ? "" : " (empty)");
+
+    // 可选项
+    for (int i = scroll_offset; i < total; i++) {
+      int y = base_y + (java_seq_pos(i, det_count) - so_pos);
+      if (y >= row - 1)
+        break;
+      const char *label;
+      if (i == 0)
+        label = "auto（启动时自动选择 java 版本）";
+      else if (i <= det_count)
+        label = detected[i - 1];
+      else
+        label = state->user_java_paths[i - 1 - det_count];
+      if (i == sel)
+        attron(A_REVERSE);
+      mvprintw(y, 4, "%s", label);
+      if (i == sel)
+        attroff(A_REVERSE);
+    }
+
+    // 滚动提示
+    if (scroll_offset > 0)
+      mvprintw(base_y - 1, 2, "...more above...");
+    if (java_seq_pos(total - 1, det_count) - so_pos >= max_display)
+      mvprintw(row - 2, 2, "...more below...");
+
+    // 操作栏 + 临时提示
+    mvprintw(row - 1, 0, "[c]hoose  [n]ew  [d]elete  (q: back)");
+    if (msg[0] && col > (int)strlen(msg) + 1)
+      mvprintw(row - 1, col - (int)strlen(msg) - 1, "%s", msg);
+    refresh();
+
+    int c = getch();
+    msg[0] = '\0';
+    if (c == 'j' || c == KEY_DOWN) {
+      if (sel < total - 1)
+        sel++;
+    } else if (c == 'k' || c == KEY_UP) {
+      if (sel > 0)
+        sel--;
+    } else if (c == 'c' || c == '\n') {
+      // 选择并写入配置
+      const char *label =
+          sel == 0 ? "auto"
+                   : (sel <= det_count ? detected[sel - 1]
+                                       : state->user_java_paths[sel - 1 -
+                                                                 det_count]);
+      // 配置值缓冲区 128 字节，超长路径截断（精度限制避免编译警告）
+      snprintf(state->items[0].value, sizeof(state->items[0].value), "%.*s",
+               (int)sizeof(state->items[0].value) - 1, label);
+      config_write(state);
+      clear();
+      return;
+    } else if (c == 'n') {
+      // 新增用户路径
+      clear();
+      echo();
+      curs_set(1);
+      mvprintw(5, 2, "Enter new java path: ");
+      char input[JAVA_PATH_LEN];
+      getnstr(input, sizeof(input) - 1);
+      noecho();
+      curs_set(0);
+      if (input[0] != '\0') {
+        struct stat st;
+        if (stat(input, &st) != 0 || !S_ISREG(st.st_mode) ||
+            access(input, X_OK) != 0) {
+          snprintf(msg, sizeof(msg), "路径不存在或不可执行");
+        } else {
+          // realpath 去重（/usr/bin/java 与已检测路径可能指向同一二进制）
+          int dup = 0;
+          char in_resolved[PATH_MAX];
+          if (realpath(input, in_resolved) != NULL) {
+            for (int i = 0; i < user_count && !dup; i++) {
+              char old[PATH_MAX];
+              if (realpath(state->user_java_paths[i], old) != NULL &&
+                  strcmp(old, in_resolved) == 0)
+                dup = 1;
+            }
+            for (int i = 0; i < det_count && !dup; i++) {
+              char old[PATH_MAX];
+              if (realpath(detected[i], old) != NULL &&
+                  strcmp(old, in_resolved) == 0)
+                dup = 1;
+            }
+          }
+          if (dup) {
+            snprintf(msg, sizeof(msg), "路径已在列表中");
+          } else if (user_count >= MAX_JAVA_PATHS) {
+            snprintf(msg, sizeof(msg), "用户路径数量已达上限");
+          } else {
+            snprintf(state->user_java_paths[user_count], JAVA_PATH_LEN, "%s",
+                     input);
+            state->user_java_path_count = user_count + 1;
+            config_write(state);
+            user_count = state->user_java_path_count;
+            total = 1 + det_count + user_count;
+            sel = 1 + det_count + user_count - 1;
+            snprintf(msg, sizeof(msg), "已添加");
+          }
+        }
+      }
+    } else if (c == 'd') {
+      // 仅用户添加的路径可删除
+      if (sel > det_count && sel < total) {
+        int uidx = sel - 1 - det_count;
+        mvprintw(row - 2, 2, "Delete %s? [y/N]", state->user_java_paths[uidx]);
+        int c2 = getch();
+        if (c2 == 'y' || c2 == 'Y') {
+          // 整体前移（memmove 处理重叠区域）
+          for (int i = uidx; i < user_count - 1; i++)
+            memmove(state->user_java_paths[i], state->user_java_paths[i + 1],
+                    JAVA_PATH_LEN);
+          state->user_java_path_count = user_count - 1;
+          config_write(state);
+          user_count = state->user_java_path_count;
+          total = 1 + det_count + user_count;
+          if (sel >= total)
+            sel = total - 1;
+          snprintf(msg, sizeof(msg), "已删除");
+        }
+      } else {
+        snprintf(msg, sizeof(msg), "仅对用户添加的路径有效");
+      }
+    } else if (c == 'q') {
+      clear();
+      return;
+    }
+  }
+}
+
 void change_config(ConfigState *state) {
 
   int row, col;
@@ -292,7 +571,10 @@ void change_config(ConfigState *state) {
 
   const char *key = state->items[idx].key;
 
-  if (strcmp(key, "memory") == 0) {
+  if (strcmp(key, "java_path") == 0) {
+    // ---- java_path：三栏选择器（auto / 自动检测 / 用户添加）----
+    change_java_path(state);
+  } else if (strcmp(key, "memory") == 0) {
     // ---- memory 配置：支持 "auto" 和手动输入数字 ----
     echo();
     curs_set(1);
@@ -444,7 +726,7 @@ void change_config(ConfigState *state) {
     clear();
 
   } else {
-    // ---- java_path (0), game_dir (2), jvm_args (3)：自由文本输入 ----
+    // ---- game_dir (2), jvm_args (3)：自由文本输入 ----
     echo();
     curs_set(1);
     clear();
@@ -512,6 +794,12 @@ void config_write(ConfigState *state) {
   for (int i = 0; i < state->item_count; i++) {
     cJSON_AddStringToObject(root, state->items[i].key, state->items[i].value);
   }
+
+  // 追加用户添加的 java 路径（隐藏配置项 java_paths）
+  cJSON *paths = cJSON_CreateArray();
+  for (int i = 0; i < state->user_java_path_count; i++)
+    cJSON_AddItemToArray(paths, cJSON_CreateString(state->user_java_paths[i]));
+  cJSON_AddItemToObject(root, "java_paths", paths);
 
   char *json_string = cJSON_Print(root);
 

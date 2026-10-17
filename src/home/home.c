@@ -29,6 +29,35 @@ void home_init(HomeState *state, VersionState *VersionState,
 
 void home_page(int ch, int *middlep, HomeState *state,
                VersionState *VersionState, ConfigState *ConfigState) {
+  // key
+  switch (ch) {
+  case 'j':
+  case KEY_DOWN:
+    state->selected = 1;
+    break;
+  case 'k':
+  case KEY_UP:
+    state->selected = 0;
+    break;
+  case 'b':
+  case '\n': {
+    // 启动选中的版本（Pinned 或 Last Play）
+    int target =
+        (state->selected == 0) ? state->pinned_index : state->last_index;
+    if (target >= 0 && target < VersionState->version_count) {
+      int saved = VersionState->selected_version;
+      VersionState->selected_version = target;
+      begin_version(VersionState, ConfigState);
+      VersionState->selected_version = saved;
+      // 刷新 last_play 指向刚刚启动的版本
+      state->last_index = target;
+      // 重新初始化 home 状态以同步 config 中的变更
+      home_init(state, VersionState, ConfigState);
+    }
+    break;
+  }
+  }
+
   clear();
 
   int row, col;
@@ -85,35 +114,6 @@ void home_page(int ch, int *middlep, HomeState *state,
   getyx(stdscr, cur_row, cur_col);
   mvprintw(cur_row, col - 27, "contact:");
   mvprintw(cur_row + 1, col - 27, "aleph0: fossrina@163.com");
-
-  // key
-  switch (ch) {
-  case 'j':
-  case KEY_DOWN:
-    state->selected = 1;
-    break;
-  case 'k':
-  case KEY_UP:
-    state->selected = 0;
-    break;
-  case 'b':
-  case '\n': {
-    // 启动选中的版本（Pinned 或 Last Play）
-    int target =
-        (state->selected == 0) ? state->pinned_index : state->last_index;
-    if (target >= 0 && target < VersionState->version_count) {
-      int saved = VersionState->selected_version;
-      VersionState->selected_version = target;
-      begin_version(VersionState, ConfigState);
-      VersionState->selected_version = saved;
-      // 刷新 last_play 指向刚刚启动的版本
-      state->last_index = target;
-      // 重新初始化 home 状态以同步 config 中的变更
-      home_init(state, VersionState, ConfigState);
-    }
-    break;
-  }
-  }
 
   // two game versions to display
   move(4, 45);

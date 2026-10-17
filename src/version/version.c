@@ -755,13 +755,16 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   char **tofree = malloc(300 * sizeof(char *));
   int fc = 0;
 
-  // Java 路径（版本级覆盖 > javaMajor 检测 > 全局默认）
+  // Java 路径（版本级覆盖 > 全局 java_path（非 auto）> javaMajor 检测 > 兜底）
   char java_bin[512];
   if (state->versions[idx].java_override[0]) {
     args[ac++] = strdup(state->versions[idx].java_override);
     tofree[fc++] = args[ac - 1];
     printf("  Java: %s (version override)\n",
            state->versions[idx].java_override);
+  } else if (strcmp(ConfigState->items[0].value, "auto") != 0) {
+    args[ac++] = ConfigState->items[0].value;
+    printf("  Java: %s (global config)\n", ConfigState->items[0].value);
   } else {
     int jmajor = state->versions[idx].javaMajor;
     if (jmajor > 0 &&
@@ -770,7 +773,8 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
       tofree[fc++] = args[ac - 1];
       printf("  Java: %s (required major version: %d)\n", java_bin, jmajor);
     } else {
-      args[ac++] = ConfigState->items[0].value;
+      args[ac++] = "/usr/bin/java";
+      printf("  Java: /usr/bin/java (fallback)\n");
     }
   }
   args[ac++] = mem_arg;

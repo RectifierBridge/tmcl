@@ -11,6 +11,10 @@ typedef struct {
   char defaule_value[128];
 } ConfigItem;
 
+// 用户添加的 Java 路径（tmcl.json 中 java_paths 数组，不展示在设置列表）
+#define MAX_JAVA_PATHS 32
+#define JAVA_PATH_LEN 512
+
 // Config 页面状态
 typedef struct {
   ConfigItem *items;
@@ -20,6 +24,8 @@ typedef struct {
   char home_dir[1000];
   char tmcl_dir[1024];
   char tmcl_config_path[1034];
+  char user_java_paths[MAX_JAVA_PATHS][JAVA_PATH_LEN]; // 用户手动添加的 java 路径
+  int user_java_path_count;
 } ConfigState;
 
 // 函数声明
