@@ -194,8 +194,8 @@ void rander_mod_version(ModVersionState *state, NewModState *NewModState) {
 
 void aaction_install(ModVersionState *state) {
   ModVersion *mv = &state->versions[state->selected];
-  char cmd[2048];
-  char dest[1024];
+  char cmd[4096];  // dest(1279) + download_url(1023) + 命令字面量
+  char dest[1280]; // mods_dir(1023) + "/" + filename(255) + NUL = 1280
   snprintf(dest, sizeof(dest), "%s/%s", state->mods_dir, mv->filename);
 
   snprintf(cmd, sizeof(cmd), "curl -# -L -m 60 -o \"%s\" \"%s\"",

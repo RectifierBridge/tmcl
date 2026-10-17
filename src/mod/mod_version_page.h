@@ -15,7 +15,7 @@ typedef struct {
   int count_flitered;
   char version_dir[1024];
   char mods_dir[1024];   // actual mods path (considers isolate)
-  char install_as[1024]; // save as
+  char install_as[1280]; // save as（mods_dir 1023 + "/" + filename 255 + NUL = 1280）
   char modloader[32];    // mod loader ot filter
   char mc_version[64];   // minecraft version to filter（与 NewModState.mc_version 对齐）
   int action_count;
