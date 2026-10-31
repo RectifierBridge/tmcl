@@ -126,3 +126,14 @@ NeoForge 是 Forge 的后继者（社区分裂产物），启动机制与 Forge 
 - [x] 扫描 `<version_dir>/mods/` 下的 .jar 文件
 - [x] 列表显示，支持启用/禁用（重命名 .jar → .jar.disabled）
 - [ ] 支持打开 mods 文件夹（未实现：mod.c 无打开文件管理器代码）
+
+---
+
+## 待排期（无优先级，按需取用）
+
+- [ ] 中文本地化：目前 UI 全英文，需引入字符串表与语言配置
+- [ ] 下载进度条：安装与模组下载期间只有 `printf` 文本日志，没有单行刷新进度
+- [ ] 文件 SHA1 校验：manifest 里已有 sha1，目前只校验 PK 魔数与文件存在性
+- [ ] 资源包 / 光影包管理（对应 `resourcepacks/`、`shaderpacks/`）
+- [ ] BMCLAPI 下载源接线：配置项 `download_cource` 已有 UI，但 install.c 中仍是硬编码官方源的 TODO
+- [ ] quilt 加载器：安装器与 `init_versions` 不认 quilt，目前只作为模组筛选条件存在
