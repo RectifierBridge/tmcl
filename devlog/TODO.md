@@ -129,6 +129,18 @@ NeoForge 是 Forge 的后继者（社区分裂产物），启动机制与 Forge 
 
 ---
 
+## V5 — 版本级 Java 选择器（2026-10-31 完成）
+
+版本配置子页的 Java 从文本输入改为选择器，并给 `java_path` 三态语义。
+
+- [x] `detect_java_paths()` 从 config.c 导出（去 static + config.h 声明）
+- [x] `begin_version` 三态分支：空=全局 / `auto`=忽略全局按版本探测 / 路径=直接使用
+- [x] `pick_version_java_path()` 选择器：Global (全局值) / auto / Detected / User added
+- [x] 版本配置页 Java / Memory 行显示 `global: <值>`
+- [ ] 选择器改为与 Config 页 `change_java_path` 共享实现（目前是 version.c 内的精简副本）
+
+---
+
 ## 待排期（无优先级，按需取用）
 
 - [ ] 中文本地化：目前 UI 全英文，需引入字符串表与语言配置
@@ -137,3 +149,4 @@ NeoForge 是 Forge 的后继者（社区分裂产物），启动机制与 Forge 
 - [ ] 资源包 / 光影包管理（对应 `resourcepacks/`、`shaderpacks/`）
 - [ ] BMCLAPI 下载源接线：配置项 `download_cource` 已有 UI，但 install.c 中仍是硬编码官方源的 TODO
 - [ ] quilt 加载器：安装器与 `init_versions` 不认 quilt，目前只作为模组筛选条件存在
+- [ ] 版本级 `memory` 输入校验：现在走 `atoi()`，填 `abc` 会得到 `-Xmx0m`（全局有 `strtol` 校验）

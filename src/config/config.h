@@ -39,4 +39,7 @@ int config_get_memory_mb(ConfigState *state);
 const char *config_get(ConfigState *state, const char *key);
 void config_set(ConfigState *state, const char *key, const char *value);
 
+// 扫描系统 java 路径（/usr/lib/jvm/* 与 PATH），返回数量，结果写入 list
+int detect_java_paths(char list[][JAVA_PATH_LEN]);
+
 #endif

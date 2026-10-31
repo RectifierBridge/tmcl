@@ -1,5 +1,43 @@
 # TMCL 开发日志
 
+## 2026-10-31 — 版本配置三个子页顶部显示版本信息
+
+### 改进
+- ✅ 版本配置子页的 Java 选择器 / Memory 输入 / JVM Args 输入顶部统一加第 0 行 `Version Config: <版本名>`（col 2），右端提示右对齐（`tap [q] to back` / `tap [Enter] to save`，窗口宽度不足 21 列时不画）
+- ✅ 子页标签下沉到第 1 行 col 3（`Java Path` / `Memory` / `JVM Args`），col 21 起显示当前值 / `global: <值>` / `empty`；Memory 提示行第 3 行、输入 `> ` 第 5 行
+- ✅ 右侧值统一用 `mvaddnstr(1, 21, ..., col - 21)` 截断，避免长 JVM 参数换行覆盖下面的提示行
+- ✅ Memory / JVM Args 第 1 行与 Java 选择器一致改为 `Current: <值>`（未覆盖时 Memory 显示 `Current: global: <全局值>`、JVM Args 显示 `Current: empty`）
+- ✅ Memory / JVM Args 空输入直接 Enter = 取消：不修改值、不写 `tmcl.json`
+- ✅ Memory / JVM Args 输入 `global`（不区分大小写）= 清除版本级覆盖、回到继承全局（与 Java 选择器的 Global 等价）
+- ✅ Memory 输入校验：只接受 `auto` 或 512–32768 的纯十进制整数；非法值（`afdsah`、`100`、`32769`、`1 024`）不保存，第 7 行红色提示后重新输入
+
+### 说明
+- 100x24 与 80x12 实测三个子页标题、截断、输入与保存均正常
+
+## 2026-10-31 — 版本级 Java 选择器 + 三态 java 覆盖
+
+### 新增
+- ✅ `<version_dir>/tmcl.json` 的 `java_path` 改为三态：空（键不存在）= 继承全局；`"auto"` = 忽略全局、强制按 `javaVersion.majorVersion` 探测；其他值 = 直接作 java 路径（`src/version/version.c` 的 `begin_version`）
+- ✅ 版本配置子页 Java 行改为选择器 `pick_version_java_path`：`Global (<全局值>)` / `auto` / `Detected` / `User added`，无底部操作栏（`j`/`k`/方向键 + Enter，`q` 取消）
+- ✅ `detect_java_paths()` 从 `src/config/config.c` 导出（去 `static`，`config.h` 加声明），供版本选择器复用
+- ✅ 版本配置页 Java / Memory 行未覆盖时显示 `global: <全局值>`，JVM Args 空值显示 `empty`
+
+### 说明
+- 实测四种 Java 分支日志均正确：`(version override)`、`(version override: auto, major version: N)`、`(global config)`、`(required major version: N)`
+- 选择器在 100x24 与 80x12 下滚动、`...more above/below...`、Enter 写入与重启读回均通过
+- 过程中修掉两处自身 bug：选中 Global 时 `sel - 2` 为负导致写入垃圾路径（补 `sel >= 2` 判断）；`max_display` 比实际可绘行多 1 导致末项不可见（`row - 4` → `row - 5`）
+
+## 2026-10-31 — java_path 子页面视觉统一 + 界面文案英文化
+
+### 改进
+- ✅ `src/config/config.c` `change_java_path` 对齐主页面视觉：第 0 行 `tap [q] to back`、第 1 行 `Java Path` / `Current: <值>`、列表从第 3 行起，去掉散文表头与两条横线
+- ✅ 底部操作栏 `[c]hoose [n]ew [d]elete` 加反色光标；`h`/`l` 与左右方向键移动，Enter 执行光标所在操作（`c`/`n`/`d` 快捷键仍可用）
+- ✅ 操作提示移到倒数第二行顶格：错误红色（`COLOR_PAIR(1)`），成功默认色；新增 `msg_err`，每次 `getch()` 后重置，避免上一条的错误色粘到成功提示
+- ✅ 界面文案英文化：java 路径选择器 5 条提示 + `src/version/version.c` 的 3 条启动/退出日志
+
+### 说明
+- 中文只保留在注释里（项目约定注释用中文）；真正的 i18n 仍列在 `devlog/TODO.md`「待排期」
+
 ## 2026-10-17 — 警告清零（-Wall 0 warning 目标达成）
 
 ### 清理

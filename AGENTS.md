@@ -71,7 +71,9 @@ build/                  # .o 产物，目录结构与 src/ 对应
 |------|------|-----------|
 | Home | `j`/`k` 选 Pinned/Last Play，`b` 或 Enter 启动 | `[Enter]`/`[b]` |
 | Version | `j`/`k` 移动，`b` 启动，`m` 模组，`p` 固定，`c` 版本配置，`n` 安装；`h`/`l` 移光标，Enter 执行 | `[b]egin [m]od [p]in [c]onfig [n]ew` |
-| Version 配置子页 | `j`/`k` 移动，Enter 编辑 Java/Memory/JVM Args 或执行操作，`q` 返回 | `[ check & complete ] [ rename ] [ delete ]` |
+| Version 配置子页 | `j`/`k` 移动，Enter 打开 Java 选择器、编辑 Memory/JVM Args 或执行操作，`q` 返回 | `[ check & complete ] [ rename ] [ delete ]` |
+| Version 配置·Java 选择器 | `j`/`k` 或方向键移动，Enter 选中，`q` 取消；无底部操作栏 | 无 |
+| Config·java_path 子页 | `j`/`k` 移动，`h`/`l` 移底部操作光标，`c`/`n`/`d` 或 Enter 执行，`q` 返回 | `[c]hoose [n]ew [d]elete` |
 | 安装页 | `j`/`k` 选行，Enter 编辑或执行，`q` 取消 | `[ start installation ]` |
 | Mod | `a` 启用/禁用，`n` 进搜索页，`d` 删除，`j`/`k` 移动 | `[a]ble [n]ew [d]elete` |
 | Mod 搜索（new_mod） | `i` 安装，`v` 版本筛选，`m` 加载器筛选，`s` 换源，`/` 搜索，Enter 选中 | `[i]nstall [v]ersion [m]odlader [s]ource [/]search` |
@@ -105,11 +107,23 @@ build/                  # .o 产物，目录结构与 src/ 对应
 
 配置页按键：`j`/`k` 移动、`c` 修改、`r` 重置、`h`/`l` 切底部两个操作、Enter 执行。改动**立即** `config_write`，没有显式保存步骤。`java_paths` 是 JSON 里独立的数组（用户手动添加的路径，`MAX_JAVA_PATHS` 32），不占 items 索引。
 
+`java_path` 子页（`change_java_path`，在 `config_page` 内部 `while(1)` 阻塞，不返回主循环）：第 0 行是 `tap [q] to back`，第 1 行是 `Java Path` / `Current: <值>`，列表从第 3 行开始；倒数第二行是操作提示（错误红色、顶格），最后一行是反色光标操作栏。`n`/`d` 的输入提示与确认行也画在倒数第二行。
+
 ### 版本级配置（`<game_dir>/versions/<name>/tmcl.json`）
 
 只认三个键：`java_path`、`memory`（支持 `"auto"`）、`jvm_args`。非空才写入，空值即删除覆盖。
 
-优先级：版本级覆盖 > 全局 `java_path`（非 auto 时）> 按 `javaVersion.majorVersion` 探测 > `/usr/bin/java`。
+`java_path` 是三态：空（键不存在）= 继承全局；`"auto"` = **忽略全局 `java_path`**，强制按 `javaVersion.majorVersion` 探测；其他值 = 直接作为 java 可执行文件路径。
+
+优先级：版本级路径 > 全局 `java_path`（非 auto 时）> 按 `javaVersion.majorVersion` 探测 > `/usr/bin/java`。
+
+版本配置子页三行的显示规则：覆盖为空时显示 `global: <全局值>`，`jvm_args` 为空时显示 `empty`；只有 Java 行按 Enter 打开选择器（`pick_version_java_path`，`version.c` 内，Global / auto / Detected / User added），Memory 与 JVM Args 仍是 `getnstr` 文本输入。
+
+三个子页顶部统一：第 0 行 `Version Config: <版本名>`（col 2），Java 选择器在右端另有 `tap [q] to back`（Memory / JVM Args 当前不画右端提示），第 1 行 col 3 是子页标签（`Java Path` / `Memory` / `JVM Args`），col 21 起是 `Current: ...`（Java：路径或 `global: <全局值>`；Memory：覆盖值或 `global: <全局值>`；JVM Args：参数或 `empty`）。Memory / JVM Args 的提示行在第 3 行、输入 `> ` 在第 5 行。
+
+Memory / JVM Args 的输入：直接按 Enter（空输入）= **取消**，不写盘也不改值；输入 `global`（`strcasecmp`，不区分大小写，精确匹配）= **清除版本级覆盖**，回到继承全局（与 Java 选择器的 Global 等价；`-Dglobal=1` 这类参数不会误判）；其他非空输入 = 写入覆盖。清除后键不写入 `tmcl.json`（`save_version_config` 只写非空值）。
+
+Memory 输入还会校验：`auto`（大小写不敏感，统一存成小写 `"auto"`）或 512–32768 的纯十进制整数（`strtol` + 越界检查，存成规范化数字）；其他值（如 `afdsah`、`100`、`32769`、`1 024`）不保存，在第 7 行以红色 `COLOR_PAIR(1)` 显示 `invalid value: enter MB between 512 and 32768` 并重新等待输入。
 
 ### 新增配置项时必须同步
 
@@ -190,6 +204,8 @@ void xxx_page(int ch, int *middlep, XxxState *state) {
 - `config.c` 把 `h`/`l`/Enter 的 `case` 标签嵌在 `r` 分支的 `if` 体内（能跑，改这段时别被绕进去）。
 - `version.c` 的 `mod()` 在索引非法时会 `system()` 写 `/tmp/mod_idx`（调试残留）。
 - `src/job/` 未编入 Makefile；`main.c` 只 include 了它的头文件。
+- **无 i18n**：所有界面文案是英文硬编码在 C 字符串里，注释才是中文；本地化（中文本地化）在 `devlog/TODO.md` 待排期。
+- 版本级 `memory` 的 UI 已校验（512–32768 / `auto` / `global`），但 `begin_version` 仍用 `atoi()` 读 JSON：手改成 `abc` 会得到 `-Xmx0m`。全局 `memory` 只有 `strtol` 纯数字校验，没有上下限。
 
 ## 开发流程
 

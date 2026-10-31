@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -755,14 +756,15 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
   char **tofree = malloc(300 * sizeof(char *));
   int fc = 0;
 
-  // Java 路径（版本级覆盖 > 全局 java_path（非 auto）> javaMajor 检测 > 兜底）
+  // Java 路径三态：版本级路径 > 继承全局 > 版本级/全局 auto 探测
+  //   "":0=继承全局，"auto"=强制按 javaMajor 探测（忽略全局），其他=指定路径
   char java_bin[512];
-  if (state->versions[idx].java_override[0]) {
-    args[ac++] = strdup(state->versions[idx].java_override);
+  const char *ov = state->versions[idx].java_override;
+  if (ov[0] && strcmp(ov, "auto") != 0) {
+    args[ac++] = strdup(ov);
     tofree[fc++] = args[ac - 1];
-    printf("  Java: %s (version override)\n",
-           state->versions[idx].java_override);
-  } else if (strcmp(ConfigState->items[0].value, "auto") != 0) {
+    printf("  Java: %s (version override)\n", ov);
+  } else if (!ov[0] && strcmp(ConfigState->items[0].value, "auto") != 0) {
     args[ac++] = ConfigState->items[0].value;
     printf("  Java: %s (global config)\n", ConfigState->items[0].value);
   } else {
@@ -771,7 +773,11 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
         find_java_for_version(jmajor, java_bin, sizeof(java_bin))) {
       args[ac++] = strdup(java_bin);
       tofree[fc++] = args[ac - 1];
-      printf("  Java: %s (required major version: %d)\n", java_bin, jmajor);
+      if (ov[0])
+        printf("  Java: %s (version override: auto, major version: %d)\n",
+               java_bin, jmajor);
+      else
+        printf("  Java: %s (required major version: %d)\n", java_bin, jmajor);
     } else {
       args[ac++] = "/usr/bin/java";
       printf("  Java: /usr/bin/java (fallback)\n");
@@ -924,7 +930,7 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     perror("execvp failed");
     exit(1);
   } else if (pid > 0) {
-    printf("Minecraft 启动中 (PID: %d)...\n", pid);
+    printf("Launching Minecraft (PID: %d)...\n", pid);
     int status;
     pid_t r;
     // SIGWINCH 等信号会中断 waitpid (EINTR)：ncurses 安装的 SIGWINCH
@@ -935,9 +941,9 @@ void begin_version(VersionState *state, ConfigState *ConfigState) {
     } while (r == -1 && errno == EINTR);
     if (r == pid) {
       if (WIFEXITED(status)) {
-        printf("Minecraft 已退出，退出码: %d\n", WEXITSTATUS(status));
+        printf("Minecraft exited with code %d\n", WEXITSTATUS(status));
       } else if (WIFSIGNALED(status)) {
-        printf("Minecraft 被信号终止: %d\n", WTERMSIG(status));
+        printf("Minecraft terminated by signal %d\n", WTERMSIG(status));
       }
     } else {
       perror("waitpid failed");
@@ -1314,6 +1320,167 @@ cc_done:
   }
 }
 
+// ---- 版本级 java 路径选择器 ----
+// 列表：Global (<全局值>) / auto / Detected / User added，无底部操作栏
+// 按键：j/k 或方向键移动，Enter 选中，q 取消
+// 第 i 个可选项在列表序列中的位置（两条节标题各占 1 行）
+static int vjava_seq_pos(int i, int det_count) {
+  int pos = i;
+  if (i >= 2)
+    pos += 1; // "Detected"
+  if (i >= 2 + det_count)
+    pos += 1; // "User added"
+  return pos;
+}
+
+static void pick_version_java_path(VersionState *state, int index,
+                                   ConfigState *cstate) {
+  VersionInfo *v = &state->versions[index];
+  int row, col;
+  getmaxyx(stdscr, row, col);
+
+  char detected[MAX_JAVA_PATHS][JAVA_PATH_LEN];
+  int det_count = detect_java_paths(detected);
+  int user_count = cstate->user_java_path_count;
+  int total = 2 + det_count + user_count; // Global + auto + 检测 + 用户
+  const char *gval = config_get(cstate, "java_path");
+  if (!gval)
+    gval = "auto";
+
+  // 初始光标定位到当前值所在行
+  int sel = 0;
+  if (v->java_override[0]) {
+    if (strcmp(v->java_override, "auto") == 0) {
+      sel = 1;
+    } else {
+      int found = 0;
+      for (int i = 0; i < det_count && !found; i++)
+        if (strcmp(detected[i], v->java_override) == 0) {
+          sel = 2 + i;
+          found = 1;
+        }
+      for (int i = 0; i < user_count && !found; i++)
+        if (strcmp(cstate->user_java_paths[i], v->java_override) == 0) {
+          sel = 2 + det_count + i;
+          found = 1;
+        }
+    }
+  }
+
+  int max_display = row - 5; // 可绘制行：y=3 .. row-3（y>=row-2 让位给提示）
+  if (max_display < 1)
+    max_display = 1;
+  int so = vjava_seq_pos(sel, det_count) - max_display + 1;
+  if (so < 0)
+    so = 0;
+
+  while (1) {
+    clear();
+    mvprintw(0, 2, "Version Config: %s", v->name);
+    mvprintw(0, col - 15, "tap [q] to back");
+    mvprintw(1, 3, "Java Path");
+    char cur[600];
+    if (!v->java_override[0])
+      snprintf(cur, sizeof(cur), "Current: global: %s", gval);
+    else
+      snprintf(cur, sizeof(cur), "Current: %s", v->java_override);
+    mvaddnstr(1, 21, cur, col - 22);
+
+    if (so > 0)
+      mvprintw(2, 3, "...more above...");
+
+    int total_seq = total + 2; // 加上两条节标题
+    for (int pos = 0; pos < total_seq; pos++) {
+      int y = 3 + pos - so;
+      if (y < 3)
+        continue;
+      if (y >= row - 2)
+        break;
+
+      if (pos == 2) { // Detected 节标题
+        mvprintw(y, 3, "Detected");
+        continue;
+      }
+      if (pos == 3 + det_count) { // User added 节标题
+        mvprintw(y, 3, "User added");
+        continue;
+      }
+
+      // 序列位置换算成可选项序号
+      int i;
+      if (pos < 2)
+        i = pos;
+      else if (pos < 3 + det_count)
+        i = 2 + (pos - 3);
+      else
+        i = 2 + det_count + (pos - (4 + det_count));
+
+      char line[JAVA_PATH_LEN + 64];
+      if (i == 0) {
+        // Global (<全局值>)：超长时截断并补 "..."（宽度 = col - 5 - 1）
+        int avail = col - 6;
+        if (avail < 16)
+          avail = 16;
+        int n = snprintf(line, sizeof(line), "Global (%s)", gval);
+        if (n > avail) {
+          int keep = avail - 4; // 留出 "..."
+          if (keep < 0)
+            keep = 0;
+          snprintf(line, sizeof(line), "Global (%.*s...)", keep, gval);
+        }
+      } else if (i == 1) {
+        snprintf(line, sizeof(line), "auto");
+      } else if (i < 2 + det_count) {
+        snprintf(line, sizeof(line), "%s", detected[i - 2]);
+      } else {
+        snprintf(line, sizeof(line), "%s",
+                 cstate->user_java_paths[i - 2 - det_count]);
+      }
+
+      if (i == sel)
+        attron(A_REVERSE);
+      mvaddnstr(y, 5, line, col - 6);
+      if (i == sel)
+        attroff(A_REVERSE);
+    }
+
+    if (so + max_display < total_seq && col > 16)
+      mvprintw(row - 1, col - 15, "...more below...");
+
+    int c = getch();
+    if (c == 'q')
+      break;
+    if (c == 'j' || c == KEY_DOWN) {
+      if (sel < total - 1)
+        sel++;
+    } else if (c == 'k' || c == KEY_UP) {
+      if (sel > 0)
+        sel--;
+    } else if (c == '\n') {
+      const char *chosen = ""; // 默认 Global：清空版本级覆盖
+      if (sel == 1)
+        chosen = "auto";
+      else if (sel >= 2 && sel < 2 + det_count)
+        chosen = detected[sel - 2];
+      else if (sel >= 2 + det_count)
+        chosen = cstate->user_java_paths[sel - 2 - det_count];
+      snprintf(v->java_override, sizeof(v->java_override), "%.*s",
+               (int)sizeof(v->java_override) - 1, chosen);
+      save_version_config(state, index, cstate);
+      break;
+    }
+
+    // 保证选中行落在可见窗口内
+    int p = vjava_seq_pos(sel, det_count);
+    if (p - so < 0)
+      so = p;
+    if (p - so >= max_display)
+      so = p - max_display + 1;
+    if (so < 0)
+      so = 0;
+  }
+}
+
 // ======================== 版本配置子页面 ========================
 void version_config_page(VersionState *state, int index,
                          ConfigState *ConfigState) {
@@ -1335,12 +1502,18 @@ void version_config_page(VersionState *state, int index,
     // 配置项（紧凑，无空行）
     const char *labels[] = {"Java", "Memory", "JVM Args"};
     char buf[3][512];
-    snprintf(buf[0], sizeof(buf[0]), "%s",
-             v->java_override[0] ? v->java_override : "(global)");
-    snprintf(buf[1], sizeof(buf[1]), "%s",
-             v->memory_override[0] ? v->memory_override : "(global)");
+    const char *gjava = config_get(ConfigState, "java_path");
+    const char *gmem = config_get(ConfigState, "memory");
+    if (v->java_override[0])
+      snprintf(buf[0], sizeof(buf[0]), "%s", v->java_override);
+    else
+      snprintf(buf[0], sizeof(buf[0]), "global: %s", gjava ? gjava : "auto");
+    if (v->memory_override[0])
+      snprintf(buf[1], sizeof(buf[1]), "%s", v->memory_override);
+    else
+      snprintf(buf[1], sizeof(buf[1]), "global: %s", gmem ? gmem : "auto");
     snprintf(buf[2], sizeof(buf[2]), "%s",
-             v->jvm_args_extra[0] ? v->jvm_args_extra : "(empty)");
+             v->jvm_args_extra[0] ? v->jvm_args_extra : "empty");
 
     for (int i = 0; i < 3; i++) {
       if (i == sel)
@@ -1376,52 +1549,94 @@ void version_config_page(VersionState *state, int index,
       break;
     case '\n':
       switch (sel) {
-      case 0: { // Java
-        echo();
-        curs_set(1);
+      case 0: { // Java：选择器（Global / auto / 检测 / 用户添加）
+        pick_version_java_path(state, index, ConfigState);
         clear();
-        mvprintw(3, 4, "Java path (empty = global):");
-        mvprintw(5, 4, "> ");
-        char in[256] = {0};
-        getnstr(in, sizeof(in) - 1);
-        strncpy(v->java_override, in, sizeof(v->java_override) - 1);
-        v->java_override[sizeof(v->java_override) - 1] = '\0';
-        noecho();
-        curs_set(0);
-        clear();
-        save_version_config(state, index, ConfigState);
         break;
       }
       case 1: { // Memory
-        echo();
-        curs_set(1);
+        char err[128] = "";
+        while (1) {
+          clear();
+          mvprintw(0, 2, "Version Config: %s", v->name);
+          mvprintw(1, 3, "Memory");
+          const char *gmem = config_get(ConfigState, "memory");
+          char cur[128];
+          if (v->memory_override[0])
+            snprintf(cur, sizeof(cur), "Current: %s", v->memory_override);
+          else
+            snprintf(cur, sizeof(cur), "Current: global: %s",
+                     gmem ? gmem : "auto");
+          mvaddnstr(1, 21, cur, col - 21);
+          mvprintw(3, 3, "Memory (MB / 'auto' / 'global'; Enter = cancel):");
+          mvprintw(5, 3, "> ");
+          if (err[0]) {
+            attron(COLOR_PAIR(1));
+            mvprintw(7, 3, "%s", err);
+            attroff(COLOR_PAIR(1));
+          }
+          echo();
+          curs_set(1);
+          char in[16] = {0};
+          getnstr(in, sizeof(in) - 1);
+          noecho();
+          curs_set(0);
+          if (in[0] == '\0')
+            break; // 空输入：取消，不做改动
+          if (strcasecmp(in, "global") == 0) {
+            // 输入 global：清除版本级覆盖，回到继承全局配置
+            v->memory_override[0] = '\0';
+            save_version_config(state, index, ConfigState);
+            break;
+          }
+          if (strcasecmp(in, "auto") == 0) {
+            snprintf(v->memory_override, sizeof(v->memory_override), "auto");
+            save_version_config(state, index, ConfigState);
+            break;
+          }
+          // 只接受 512–32768 MB 的纯十进制数字（与全局自动内存的取值范围一致）
+          char *num_end = in;
+          long mb = strtol(in, &num_end, 10);
+          if (*num_end != '\0' || mb < 512 || mb > 32768) {
+            snprintf(err, sizeof(err),
+                     "invalid value: enter MB between 512 and 32768");
+            continue; // 红色报错后重新输入
+          }
+          snprintf(v->memory_override, sizeof(v->memory_override), "%ld", mb);
+          save_version_config(state, index, ConfigState);
+          break;
+        }
         clear();
-        mvprintw(3, 4, "Memory (empty = global, or 'auto'):");
-        mvprintw(5, 4, "> ");
-        char in[16] = {0};
-        getnstr(in, sizeof(in) - 1);
-        strncpy(v->memory_override, in, sizeof(v->memory_override) - 1);
-        v->memory_override[sizeof(v->memory_override) - 1] = '\0';
-        noecho();
-        curs_set(0);
-        clear();
-        save_version_config(state, index, ConfigState);
         break;
       }
       case 2: { // JVM args
+        clear();
+        mvprintw(0, 2, "Version Config: %s", v->name);
+        mvprintw(1, 3, "JVM Args");
+        char cur[600];
+        if (v->jvm_args_extra[0])
+          snprintf(cur, sizeof(cur), "Current: %s", v->jvm_args_extra);
+        else
+          snprintf(cur, sizeof(cur), "Current: empty");
+        mvaddnstr(1, 21, cur, col - 21);
         echo();
         curs_set(1);
-        clear();
-        mvprintw(3, 4, "Extra JVM args (empty = none):");
-        mvprintw(5, 4, "> ");
+        mvprintw(3, 3, "Extra JVM args ('global' / Enter = cancel):");
+        mvprintw(5, 3, "> ");
         char in[512] = {0};
         getnstr(in, sizeof(in) - 1);
-        strncpy(v->jvm_args_extra, in, sizeof(v->jvm_args_extra) - 1);
-        v->jvm_args_extra[sizeof(v->jvm_args_extra) - 1] = '\0';
+        if (strcasecmp(in, "global") == 0) {
+          // 输入 global：清除版本级覆盖，回到继承全局配置
+          v->jvm_args_extra[0] = '\0';
+          save_version_config(state, index, ConfigState);
+        } else if (in[0] != '\0') {
+          strncpy(v->jvm_args_extra, in, sizeof(v->jvm_args_extra) - 1);
+          v->jvm_args_extra[sizeof(v->jvm_args_extra) - 1] = '\0';
+          save_version_config(state, index, ConfigState);
+        }
         noecho();
         curs_set(0);
         clear();
-        save_version_config(state, index, ConfigState);
         break;
       }
       case 3: // check & complete

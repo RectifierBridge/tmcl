@@ -42,9 +42,9 @@ void config_init(ConfigState *state) {
                   "jvm_args",       "download_cource", "mod_source",
                   "lib_threads",    "ast_threads",     "isolate",
                   "pinned_version", "last_play"};
-  char *default_values[] = {"auto",          "auto",       game_dir, "",
-                            "Official",      "CurseForge", "16",     "96",
-                            "yes",           "",           ""};
+  char *default_values[] = {"auto",     "auto",       game_dir, "",
+                            "Official", "CurseForge", "16",     "96",
+                            "yes",      "",           ""};
 
   for (int i = 0; i < state->item_count; i++) {
     strcpy(state->items[i].key, keys[i]);
@@ -322,7 +322,7 @@ static int java_list_add(char list[][JAVA_PATH_LEN], int *count,
 }
 
 // 自动检测系统中的 Java 路径（/usr/lib/jvm 目录扫描 + PATH），返回数量
-static int detect_java_paths(char list[][JAVA_PATH_LEN]) {
+int detect_java_paths(char list[][JAVA_PATH_LEN]) {
   int count = 0;
 
   // 1. 扫描 /usr/lib/jvm/*/bin/java（旧版 JRE 布局用 jre/bin/java）
@@ -399,8 +399,10 @@ static void change_java_path(ConfigState *state) {
   }
   int scroll_offset = 0;
   char msg[64] = ""; // 临时操作提示
+  int msg_err = 0;   // 1 = 错误（红色显示）
+  int action = 0;    // 底部操作栏光标：0=choose 1=new 2=delete
 
-  int max_display = row - 1 - 6; // 列表窗口行数（底部留一行操作栏）
+  int max_display = row - 5; // 列表窗口行数：base_y(4) 到 row-2
   if (max_display < 1)
     max_display = 1;
 
@@ -416,37 +418,40 @@ static void change_java_path(ConfigState *state) {
     }
 
     clear();
-    mvprintw(2, 2, "Select java_path");
-    mvprintw(3, 2, "Current: %s", state->items[0].value);
+    // 右上角返回提示：与主页面 "tap [q] to quit" 同位置
+    mvprintw(0, col - 15, "tap [q] to back");
+    // 标题行：左标题 + 右当前值，与主页面表头同高、同起点，不再画下划线
+    mvprintw(1, 3, "Java Path");
+    mvprintw(1, 21, "Current: %s", state->items[0].value);
 
     int so_pos = java_seq_pos(scroll_offset, det_count);
-    int base_y = 6;
+    int base_y = 3;
 
     // 节标题（随列表滚动）
     int det_head = 1;
     int user_head = 2 + det_count;
     if (det_head >= so_pos)
-      mvprintw(base_y + (det_head - so_pos), 2, "--- detected%s ---",
+      mvprintw(base_y + (det_head - so_pos), 3, "Detected%s",
                det_count ? "" : " (empty)");
     if (user_head >= so_pos)
-      mvprintw(base_y + (user_head - so_pos), 2, "--- user added%s ---",
+      mvprintw(base_y + (user_head - so_pos), 3, "User added%s",
                user_count ? "" : " (empty)");
 
     // 可选项
     for (int i = scroll_offset; i < total; i++) {
       int y = base_y + (java_seq_pos(i, det_count) - so_pos);
-      if (y >= row - 1)
+      if (y >= row - 2)
         break;
       const char *label;
       if (i == 0)
-        label = "auto（启动时自动选择 java 版本）";
+        label = "auto";
       else if (i <= det_count)
         label = detected[i - 1];
       else
         label = state->user_java_paths[i - 1 - det_count];
       if (i == sel)
         attron(A_REVERSE);
-      mvprintw(y, 4, "%s", label);
+      mvprintw(y, 5, "%s", label);
       if (i == sel)
         attroff(A_REVERSE);
     }
@@ -454,17 +459,38 @@ static void change_java_path(ConfigState *state) {
     // 滚动提示
     if (scroll_offset > 0)
       mvprintw(base_y - 1, 2, "...more above...");
-    if (java_seq_pos(total - 1, det_count) - so_pos >= max_display)
-      mvprintw(row - 2, 2, "...more below...");
 
-    // 操作栏 + 临时提示
-    mvprintw(row - 1, 0, "[c]hoose  [n]ew  [d]elete  (q: back)");
-    if (msg[0] && col > (int)strlen(msg) + 1)
-      mvprintw(row - 1, col - (int)strlen(msg) - 1, "%s", msg);
+    // 操作栏（最后一行，反色高亮当前操作），滚动提示放右下角
+    {
+      static const char *acts[3] = {"[c]hoose", "[n]ew", "[d]elete"};
+      int cx = 0;
+      for (int i = 0; i < 3; i++) {
+        if (i == action)
+          attron(A_REVERSE);
+        mvprintw(row - 1, cx, "%s", acts[i]);
+        if (i == action)
+          attroff(A_REVERSE);
+        cx += (int)strlen(acts[i]) + 1; // 操作之间隔一个空格
+      }
+    }
+    if (java_seq_pos(total - 1, det_count) - so_pos >= max_display &&
+        col > 16)
+      mvprintw(row - 1, col - 15, "...more below...");
+    // 提示行：倒数第二行、顶格，错误用红色（文案待本地化）
+    if (msg[0]) {
+      if (msg_err)
+        attron(COLOR_PAIR(1));
+      mvprintw(row - 2, 0, "%s", msg);
+      if (msg_err)
+        attroff(COLOR_PAIR(1));
+    }
     refresh();
 
     int c = getch();
     msg[0] = '\0';
+    msg_err = 0; // 每次输入先清空上一条提示的错误标记
+    if (c == '\n')
+      c = action == 0 ? 'c' : (action == 1 ? 'n' : 'd'); // Enter 执行光标所在操作
     if (c == 'j' || c == KEY_DOWN) {
       if (sel < total - 1)
         sel++;
@@ -475,9 +501,9 @@ static void change_java_path(ConfigState *state) {
       // 选择并写入配置
       const char *label =
           sel == 0 ? "auto"
-                   : (sel <= det_count ? detected[sel - 1]
-                                       : state->user_java_paths[sel - 1 -
-                                                                 det_count]);
+                   : (sel <= det_count
+                          ? detected[sel - 1]
+                          : state->user_java_paths[sel - 1 - det_count]);
       // 配置值缓冲区 128 字节，超长路径截断（精度限制避免编译警告）
       snprintf(state->items[0].value, sizeof(state->items[0].value), "%.*s",
                (int)sizeof(state->items[0].value) - 1, label);
@@ -485,11 +511,13 @@ static void change_java_path(ConfigState *state) {
       clear();
       return;
     } else if (c == 'n') {
-      // 新增用户路径
-      clear();
+      // 新增用户路径：输入行放在列表下方，避免盖住列表内容
       echo();
       curs_set(1);
-      mvprintw(5, 2, "Enter new java path: ");
+      move(row - 2, 0);
+      clrtoeol();
+      mvprintw(row - 2, 0, "Enter new java path: ");
+      refresh();
       char input[JAVA_PATH_LEN];
       getnstr(input, sizeof(input) - 1);
       noecho();
@@ -498,7 +526,9 @@ static void change_java_path(ConfigState *state) {
         struct stat st;
         if (stat(input, &st) != 0 || !S_ISREG(st.st_mode) ||
             access(input, X_OK) != 0) {
-          snprintf(msg, sizeof(msg), "路径不存在或不可执行");
+          snprintf(msg, sizeof(msg),
+                   "path does not exist or is not executable");
+          msg_err = 1;
         } else {
           // realpath 去重（/usr/bin/java 与已检测路径可能指向同一二进制）
           int dup = 0;
@@ -518,9 +548,11 @@ static void change_java_path(ConfigState *state) {
             }
           }
           if (dup) {
-            snprintf(msg, sizeof(msg), "路径已在列表中");
+            snprintf(msg, sizeof(msg), "path already in the list");
+            msg_err = 1;
           } else if (user_count >= MAX_JAVA_PATHS) {
-            snprintf(msg, sizeof(msg), "用户路径数量已达上限");
+            snprintf(msg, sizeof(msg), "too many user paths");
+            msg_err = 1;
           } else {
             snprintf(state->user_java_paths[user_count], JAVA_PATH_LEN, "%s",
                      input);
@@ -529,7 +561,7 @@ static void change_java_path(ConfigState *state) {
             user_count = state->user_java_path_count;
             total = 1 + det_count + user_count;
             sel = 1 + det_count + user_count - 1;
-            snprintf(msg, sizeof(msg), "已添加");
+            snprintf(msg, sizeof(msg), "added");
           }
         }
       }
@@ -537,7 +569,10 @@ static void change_java_path(ConfigState *state) {
       // 仅用户添加的路径可删除
       if (sel > det_count && sel < total) {
         int uidx = sel - 1 - det_count;
-        mvprintw(row - 2, 2, "Delete %s? [y/N]", state->user_java_paths[uidx]);
+        move(row - 2, 0);
+        clrtoeol();
+        mvprintw(row - 2, 0, "Delete %s? [y/N]", state->user_java_paths[uidx]);
+        refresh();
         int c2 = getch();
         if (c2 == 'y' || c2 == 'Y') {
           // 整体前移（memmove 处理重叠区域）
@@ -550,11 +585,16 @@ static void change_java_path(ConfigState *state) {
           total = 1 + det_count + user_count;
           if (sel >= total)
             sel = total - 1;
-          snprintf(msg, sizeof(msg), "已删除");
+          snprintf(msg, sizeof(msg), "deleted");
         }
       } else {
-        snprintf(msg, sizeof(msg), "仅对用户添加的路径有效");
+        snprintf(msg, sizeof(msg), "only user-added paths can be deleted");
+        msg_err = 1;
       }
+    } else if (c == 'h' || c == KEY_LEFT) {
+      action = (action + 2) % 3; // 操作栏光标左移
+    } else if (c == 'l' || c == KEY_RIGHT) {
+      action = (action + 1) % 3; // 操作栏光标右移
     } else if (c == 'q') {
       clear();
       return;
